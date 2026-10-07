@@ -160,7 +160,7 @@ button, select, input { font: inherit; color: inherit; }
 /* Driving map: tilted street plane + flat overlay + HTML badges */
 .map-card { --haze: #0d141b; flex: 1; min-height: 180px; position: relative; overflow: hidden; padding: 0; background: #10161d; isolation: isolate; }
 .map-card.day { --haze: #d7dee4; background: #ebe8e1; }
-.map-plane { position: absolute; }
+.map-plane { position: absolute; will-change: transform; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
 .map-plane canvas { display: block; width: 100%; height: 100%; }
 #mapOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .map-haze { position: absolute; left: 0; right: 0; top: 0; height: 26%; background: linear-gradient(var(--haze) 20%, transparent); pointer-events: none; }
@@ -303,6 +303,8 @@ button, select, input { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .about { font-size: 14px; line-height: 1.5; color: #b6c4ce; }
 .about p { margin: 8px 0; }
+.about ul { margin: 6px 0; padding-left: 18px; display: grid; gap: 6px; }
+.v1-help { padding-bottom: 6px; }
 
 /* ---------- Toast (sits above the tab bar) ---------- */
 .toast {
@@ -321,7 +323,7 @@ button, select, input { font: inherit; color: inherit; }
   <header class="topbar">
     <div class="brand">RADAR<span>LINK</span></div>
     <div id="connStatus" class="pill" data-state="idle" role="status" aria-live="polite"><i></i><span>Disconnected</span></div>
-    <button id="connectBtn" class="btn head primary">Connect</button>
+    <button id="connectBtn" class="btn head primary">Connect V1</button>
   </header>
 
   <div id="compatBanner" class="banner" hidden></div>
@@ -344,7 +346,7 @@ button, select, input { font: inherit; color: inherit; }
         </div>
         <div id="stack" class="stack"></div>
         <div id="info" class="statusline"></div>
-        <div id="idleHint" class="idle-hint">Tap <b>Connect</b> for radar alerts. Cameras and the map run on GPS alone.</div>
+        <div id="idleHint" class="idle-hint">Tap <b>Connect V1</b> to get radar alerts from your Valentine One detector. The map and camera alerts work without it.</div>
       </div>
 
       <div id="mapBox" class="card map-card night" aria-label="Driving map">
@@ -397,7 +399,16 @@ button, select, input { font: inherit; color: inherit; }
         <ul id="cityResults" class="list"></ul>
       </div>
 
-      <h4>Connection</h4>
+      <h4>Radar detector (V1)</h4>
+      <div class="about v1-help">
+        <p><b>V1</b> is the Valentine One radar detector. RadarLink reads its alerts over Bluetooth, then adds the map, voice and filtering.</p>
+        <ul>
+          <li><b>V1 Gen2:</b> Bluetooth is built in. Tap <b>Connect V1</b> and pick the device whose name starts with <b>V1</b>.</li>
+          <li><b>Older V1:</b> needs Valentine's <b>V1connection LE</b>, a small Bluetooth adapter that plugs into the detector. Pick the <b>V1C-LE…</b> device.</li>
+          <li><b>No V1?</b> Skip this. The map, speed cameras and city filtering work on their own.</li>
+        </ul>
+        <p>Only one app can link to the detector at a time, so close Valentine's own app first.</p>
+      </div>
       <label class="srow"><span>Auto-reconnect to detector</span><input type="checkbox" data-setting="autoReconnect"></label>
       <!-- Test mode, only shown when the page is opened with #demo at the end of its address -->
       <div id="demoRow" class="srow" hidden><span>Test drive<small>Simulated alerts for testing without a V1</small></span><button id="demoBtn" class="btn sm">Start</button></div>
@@ -437,7 +448,7 @@ button, select, input { font: inherit; color: inherit; }
       <h4>About</h4>
       <div class="about">
         <p>Needs Chrome on Android over <b>https://</b>. iPhone and iPad can't use Web Bluetooth, so they get the map and cameras but no V1 alerts.</p>
-        <p>To pair, plug the V1connection LE into the V1, tap <b>Connect</b> and pick the <b>V1C-LE…</b> device. Close the official app first; only one app can connect at a time.</p>
+        <p>To link your detector, see <b>Radar detector (V1)</b> at the top of Settings.</p>
         <p>Keep RadarLink on screen while driving, because Android delays sound from background tabs. Laser alerts are never filtered or locked out.</p>
         <p>Map data and tiles © OpenStreetMap contributors. Camera locations come from OpenStreetMap and can be incomplete. City list: U.S. Census Bureau 2025 Gazetteer.</p>
       </div>
@@ -817,8 +828,9 @@ async function connectBle() {
   } catch { /* ignore */ }
   setConn('scanning');
   try {
+    // Lists the V1connection LE adapter ("V1C-LE…") and V1s with built-in Bluetooth (names starting "V1").
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [V1C.SERVICE] }, { namePrefix: 'V1C' }],
+      filters: [{ services: [V1C.SERVICE] }, { namePrefix: 'V1' }],
       optionalServices: [V1C.SERVICE],
     });
     attachDevice(device);
@@ -826,7 +838,11 @@ async function connectBle() {
     conn.retry = 0;
     await gattConnect();
   } catch (e) {
-    if (e.name === 'NotFoundError') setConn('idle');            // user cancelled the chooser
+    if (e.code === 'not-a-v1') {
+      disconnectBle();
+      setConn('error', 'not a V1');
+      toast('That device doesn’t send Valentine One alerts. Pick the V1 or V1C-LE device instead.', null, 6000);
+    } else if (e.name === 'NotFoundError') setConn('idle');     // user cancelled the chooser
     else if (conn.device && !conn.userDisconnect) scheduleReconnect();
     else setConn('error', e.message);
   }
@@ -845,7 +861,9 @@ async function gattConnect() {
   setConn('connecting');
   try {
     const server = await conn.device.gatt.connect();
-    const svc = await server.getPrimaryService(V1C.SERVICE);
+    const svc = await server.getPrimaryService(V1C.SERVICE).catch(() => {
+      throw Object.assign(new Error('Device has no V1 data service'), { code: 'not-a-v1' });
+    });
     const notify = await svc.getCharacteristic(V1C.V1_OUT_SHORT);
     const write = await svc.getCharacteristic(V1C.CLIENT_OUT_SHORT);
     notify.addEventListener('characteristicvaluechanged', onBleNotify);
@@ -886,7 +904,11 @@ function scheduleReconnect(delayOverride) {
   conn.retryTimer = setTimeout(async () => {
     if (conn.userDisconnect || Demo.active) return;
     try { await gattConnect(); toast('Detector reconnected'); }
-    catch (e) { console.warn('Reconnect failed', e); scheduleReconnect(); }
+    catch (e) {
+      console.warn('Reconnect failed', e);
+      if (e.code === 'not-a-v1') { disconnectBle(); setConn('error', 'not a V1'); return; }   // retrying won't help
+      scheduleReconnect();
+    }
   }, delay);
 }
 
@@ -1487,8 +1509,8 @@ function renderDisplay() {
 const arrowGlyphs = d => (d.includes('F') ? '▲' : '') + (d.includes('S') ? '◆' : '') + (d.includes('R') ? '▼' : '');
 
 const STATUS_TEXT = {
-  idle: 'V1 not connected', scanning: 'Scanning…', connecting: 'Connecting…', connected: 'V1 connected',
-  nodata: 'V1 · no data', reconnecting: 'Reconnecting…', demo: 'Test drive', error: 'Error',
+  idle: 'No detector', scanning: 'Searching…', connecting: 'Connecting…', connected: 'Detector linked',
+  nodata: 'Detector · no data', reconnecting: 'Reconnecting…', demo: 'Test drive', error: 'Not linked',
 };
 
 function setConn(state, detail = '') {
@@ -1506,7 +1528,7 @@ function setConn(state, detail = '') {
 function renderControls() {
   const busy = ['scanning', 'connecting', 'connected', 'nodata', 'reconnecting'].includes(conn.state);
   // One header button: Connect / Disconnect / Stop test.
-  el.connectBtn.textContent = Demo.active ? 'Stop test' : busy ? 'Disconnect' : 'Connect';
+  el.connectBtn.textContent = Demo.active ? 'Stop test' : busy ? 'Disconnect' : 'Connect V1';
   el.connectBtn.classList.toggle('primary', !busy && !Demo.active);
   el.connectBtn.classList.toggle('stop', Demo.active);
   el.connectBtn.disabled = !Demo.active && !busy && !bleSupported();
@@ -1946,7 +1968,8 @@ function layoutMap() {
   const sFar = P / (P + above * Math.sin(T));
   const PW = Math.ceil(W / sFar + 48), PH = Math.ceil(Math.max(above + below, ay + down + 24));
   const pax = PW / 2, pay = above;
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+  // Keep the tilted canvas under ~4.5 megapixels: phones split bigger 3D layers into pieces that can tear.
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.75, Math.sqrt(4.5e6 / (PW * PH)));
   const odpr = Math.min(window.devicePixelRatio || 1, 2.5);
   Object.assign(el.mapPlane.style, {
     width: PW + 'px', height: PH + 'px', left: (ax - pax) + 'px', top: (ay - pay) + 'px',
@@ -2037,24 +2060,76 @@ function updateMapView(dt) {
 /** OpenStreetMap's standard tiles (no API key; light personal use per the OSM tile policy). */
 const tileUrl = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 
+// Night look: invert the light OSM tiles (hue-rotate keeps water blue, parks green).
+const NIGHT_FILTER = 'invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55)';
+const CANVAS_FILTER = 'filter' in CanvasRenderingContext2D.prototype;
+
+/**
+ * Tile cache. At night each tile is recoloured ONCE when it arrives and kept as a small canvas,
+ * instead of running the colour filter on every tile every frame (slow on phones → stutter).
+ * Returns the tile when it's ready to draw, else null (and starts loading it if `load`).
+ */
 function getTile(z, x, y, load) {
+  const style = mapStyle();
+  if (MAP.tileStyle !== style) { MAP.tiles.clear(); MAP.tileStyle = style; }   // day ↔ night: start fresh
   const key = `${z}/${x}/${y}`;
   let t = MAP.tiles.get(key);
-  if (t) { MAP.tiles.delete(key); MAP.tiles.set(key, t); }          // mark recently used
+  if (t) { MAP.tiles.delete(key); MAP.tiles.set(key, t); }                     // mark recently used
   else if (load) {
-    t = { img: new Image(), ok: false };
-    t.img.onload = () => { t.ok = true; MAP.loads++; MAP.dirty = true; };
-    t.img.onerror = () => { MAP.failures++; setTimeout(() => MAP.tiles.delete(key), 20000); };
-    t.img.src = tileUrl(z, x, y);
+    t = { bmp: null, size: TILE };
+    const img = new Image();
+    img.onload = () => {
+      t.size = img.naturalWidth || TILE;
+      if (style === 'night' && CANVAS_FILTER) {
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = t.size;
+        const cx = cv.getContext('2d');
+        cx.filter = NIGHT_FILTER;
+        cx.drawImage(img, 0, 0);
+        t.bmp = cv;
+      } else {
+        t.bmp = img;
+      }
+      MAP.loads++;
+      MAP.dirty = true;
+    };
+    img.onerror = () => { MAP.failures++; setTimeout(() => MAP.tiles.delete(key), 20000); };
+    img.src = tileUrl(z, x, y);
     MAP.tiles.set(key, t);
-    if (MAP.tiles.size > 400) MAP.tiles.delete(MAP.tiles.keys().next().value);
+    if (MAP.tiles.size > 320) MAP.tiles.delete(MAP.tiles.keys().next().value);   // ~80 MB cap on phones
   }
-  return t && t.ok ? t : null;
+  return t && t.bmp ? t : null;
 }
 
-/** The current camera as numbers: integer tile zoom, scale, centre in world px, rotation. */
+/**
+ * Draw something into an empty tile slot while its real tile loads, so the map never shows holes:
+ * a lower-zoom ancestor cropped to this slot (blurry but complete), else any higher-zoom children.
+ */
+function drawTileFallback(c, zi, x, y, X, Y, S) {
+  for (let up = 1; up <= 3 && zi - up >= 0; up++) {
+    const p = getTile(zi - up, x >> up, y >> up, up === 1);   // also fetch the parent: 1 request backs 4 slots
+    if (!p) continue;
+    const n = 1 << up, w = p.size / n;
+    c.drawImage(p.bmp, (x & (n - 1)) * w, (y & (n - 1)) * w, w, w, X, Y, S, S);
+    return;
+  }
+  const half = TILE / 2;
+  for (let i = 0; i < 4; i++) {
+    const ch = getTile(zi + 1, x * 2 + (i & 1), y * 2 + (i >> 1), false);
+    if (ch) c.drawImage(ch.bmp, X + (i & 1) * half, Y + (i >> 1) * half, half + (S - TILE), half + (S - TILE));
+  }
+}
+
+/**
+ * The current camera as numbers: integer tile zoom, scale, centre in world px, rotation.
+ * The tile zoom has hysteresis: it only changes when the real zoom leaves [zi − 0.4, zi + 1),
+ * so speed-based zoom hovering near a whole number doesn't flip between two tile sets.
+ */
 function frameOf(v) {
-  const zi = clamp(Math.floor(v.zoom), 3, 19);
+  let zi = MAP.zi;
+  if (zi == null || v.zoom < zi - 0.4 || v.zoom >= zi + 1) zi = Math.floor(v.zoom);
+  zi = clamp(zi, 3, 19);
+  MAP.zi = zi;
   const h = v.heading * Math.PI / 180;
   return { zi, k: 2 ** (v.zoom - zi), car: worldPx(v.lat, v.lon, zi), h, cos: Math.cos(h), sin: Math.sin(h) };
 }
@@ -2115,23 +2190,18 @@ function drawMap(now) {
     minX = Math.min(minX, wx); maxX = Math.max(maxX, wx); minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
   }
   toWorld();
-  // Night: invert the light OSM tiles into a dark map (hue-rotate keeps water blue, parks green).
-  c.filter = night ? 'invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55)' : 'saturate(0.85)';
+  // Each tile overlaps its neighbours by ~1.5 screen pixels so rotated edges never leave hairline seams.
+  const S = TILE + Math.max(0.6, 1.5 / (k * G.dpr));
   const n = 2 ** zi;
   const y0 = Math.max(0, Math.floor(minY / TILE)), y1 = Math.min(n - 1, Math.floor(maxY / TILE));
   for (let ty = y0; ty <= y1; ty++) {
     for (let tx = Math.floor(minX / TILE); tx <= Math.floor(maxX / TILE); tx++) {
       const wx = ((tx % n) + n) % n;
       const t = getTile(zi, wx, ty, true);
-      if (t) { c.drawImage(t.img, tx * TILE, ty * TILE, TILE + 0.6, TILE + 0.6); continue; }
-      const p = getTile(zi - 1, wx >> 1, ty >> 1, false);                 // blurry parent while loading
-      if (p) {
-        const s = p.img.naturalWidth / 2;
-        c.drawImage(p.img, (wx & 1) * s, (ty & 1) * s, s, s, tx * TILE, ty * TILE, TILE + 0.6, TILE + 0.6);
-      }
+      if (t) c.drawImage(t.bmp, tx * TILE, ty * TILE, S, S);
+      else drawTileFallback(c, zi, wx, ty, tx * TILE, ty * TILE, S);
     }
   }
-  c.filter = 'none';
 
   // How far around the view centre to look for lockouts / cameras (grows as you zoom out).
   const span = Math.max(0.05, 600 / 2 ** v.zoom);
@@ -2248,6 +2318,7 @@ function renderMapUi() {
   const night = mapStyle() === 'night';
   el.mapBox.classList.toggle('night', night);
   el.mapBox.classList.toggle('day', !night);
+  el.mapTiles.style.filter = night && !CANVAS_FILTER ? NIGHT_FILTER : '';   // older browsers: recolour via CSS
 
   const ci = cityInfo();
   el.cityChip.innerHTML = ci
