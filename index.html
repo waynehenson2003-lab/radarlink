@@ -1,0 +1,2609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05080b">
+<meta name="description" content="RadarLink - phone dashboard for Valentine One Gen2 via V1connection LE">
+<title>RadarLink</title>
+<style>
+/* =====================================================================
+   THEME — dark night-driving palette. Band colours encode threat level.
+   ===================================================================== */
+:root {
+  --bg: #04070a;
+  --panel: #0b1117;
+  --panel2: #101820;
+  --line: #1b2731;
+  --text: #d6e1e9;
+  --dim: #6b7f8e;
+  --off: #16202a;          /* unlit LEDs / arrows */
+  --laser: #ff2b3b;
+  --ka: #ff8a1c;
+  --k: #ffd21a;
+  --ku: #c77dff;
+  --x: #9aa5ae;
+  --ok: #2fd38a;
+  --warn: #ffb020;
+  --err: #ff4d5a;
+  --info: #4aa8ff;
+  --cam: #5aa9ff;          /* speed / red-light camera warnings */
+  --tabbar-h: 60px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+html { padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px); } /* clear notch / home bar */
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;                       /* the app shell scrolls, not the page */
+}
+button, select, input { font: inherit; color: inherit; }
+
+/* ---------- App shell: header / scrolling views / bottom tab bar ---------- */
+.shell {
+  display: flex; flex-direction: column; height: 100%;
+  max-width: 1100px; margin: 0 auto;
+}
+.shell.dim { filter: brightness(.55); }
+.topbar { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px 8px; }
+.brand { font-weight: 800; letter-spacing: .08em; font-size: 16px; white-space: nowrap; }
+.brand span { color: var(--ok); }
+.pill {
+  flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px;
+  font-size: 13px; font-weight: 600; color: var(--dim);
+}
+.pill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill i { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: none; }
+.pill[data-state="connected"] { color: var(--text); }
+.pill[data-state="connected"] i { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.pill[data-state="scanning"] i, .pill[data-state="connecting"] i,
+.pill[data-state="reconnecting"] i, .pill[data-state="nodata"] i { background: var(--warn); animation: blink 1s infinite; }
+.pill[data-state="reconnecting"], .pill[data-state="nodata"] { color: #ffd27a; }
+.pill[data-state="demo"] { color: #a9d4ff; }
+.pill[data-state="demo"] i { background: var(--info); box-shadow: 0 0 8px var(--info); }
+.pill[data-state="error"] { color: #ff9aa4; }
+.pill[data-state="error"] i { background: var(--err); }
+@keyframes blink { 50% { opacity: .25; } }
+
+.banner {
+  flex: none; margin: 0 16px 8px; border: 1px solid #5a4310; background: #1d1606; color: #ffd27a;
+  border-radius: 12px; padding: 9px 12px; font-size: 13px; line-height: 1.4;
+}
+.views { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.view { padding: 2px 16px 16px; }
+.view[hidden] { display: none !important; }
+
+.tabbar {
+  flex: none; display: grid; grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--line); background: var(--panel);
+}
+.tabbar button {
+  position: relative; background: none; border: 0; min-height: var(--tabbar-h); cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  font-size: 12px; font-weight: 700; color: var(--dim); touch-action: manipulation;
+}
+.tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.tabbar button[aria-selected="true"] { color: var(--ok); }
+.tabbar .dot { position: absolute; top: 9px; left: calc(50% + 9px); width: 9px; height: 9px; border-radius: 50%; background: var(--laser); display: none; }
+.tabbar.alerting .dot { display: block; animation: blink .6s infinite; }
+
+/* ---------- Buttons ---------- */
+.btn {
+  min-height: 60px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel2);
+  font-size: 17px; font-weight: 700; padding: 8px 12px; cursor: pointer; touch-action: manipulation;
+}
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .35; cursor: default; }
+.btn.primary { border-color: #16583c; background: #0c2a1e; color: #8ff0c2; }
+.btn.sm { min-height: 38px; font-size: 14px; border-radius: 10px; padding: 4px 12px; }
+.btn.head { flex: none; min-height: 38px; border-radius: 999px; font-size: 14px; padding: 0 16px; }
+.btn.head.stop { border-color: var(--info); background: #0b2238; color: #a9d4ff; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--ok); font-weight: 700; text-decoration: underline; cursor: pointer; }
+
+/* ---------- Drive view (fits one screen, never scrolls) ---------- */
+#view-drive { height: 100%; display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; }
+
+.hero { --c: #2a3944; flex: none; text-align: center; padding: 10px 16px 12px; transition: box-shadow .2s, border-color .2s; }
+.hero[data-band="Laser"] { --c: var(--laser); }
+.hero[data-band="Ka"]    { --c: var(--ka); }
+.hero[data-band="K"]     { --c: var(--k); }
+.hero[data-band="Ku"]    { --c: var(--ku); }
+.hero[data-band="X"]     { --c: var(--x); }
+.hero[data-band="Cam"]   { --c: var(--cam); }
+.hero.alerting {
+  border-color: var(--c);
+  background: radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--c) 24%, transparent), var(--panel) 72%);
+  box-shadow: 0 0 36px -12px var(--c);
+}
+.hero[data-band="Laser"].alerting { animation: flash .35s steps(2) infinite; }
+@keyframes flash { 50% { background: color-mix(in srgb, var(--laser) 38%, var(--panel)); } }
+
+.band-label {
+  font-size: clamp(64px, 24vw, 132px); line-height: 1; font-weight: 900; letter-spacing: -.02em;
+  color: #24323d; font-variant-numeric: tabular-nums;
+}
+.hero.alerting .band-label { color: var(--c); text-shadow: 0 0 28px color-mix(in srgb, var(--c) 55%, transparent); }
+.band-label.small { font-size: clamp(36px, 12vw, 64px); padding: 10px 0 4px; }
+.band-label.cam { font-size: clamp(28px, 9vw, 52px); padding: 14px 0 6px; }
+.band-sub { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; min-height: 26px; margin-top: 4px;
+            font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.band-sub .muted { color: var(--dim); font-weight: 600; }
+
+.readout { display: flex; align-items: flex-end; gap: 16px; margin-top: 10px; }
+.bars { flex: 1; display: flex; align-items: flex-end; gap: 5px; height: 56px; }
+.bars i { flex: 1; border-radius: 4px; background: var(--off); transition: background .08s; }
+.bars i.lit { background: var(--c); box-shadow: 0 0 12px -2px var(--c); }
+.arrows { flex: none; width: 60px; height: 70px; display: block; }
+.arrows .a { fill: var(--off); transition: fill .08s; }
+.arrows .a.lit { fill: var(--c); filter: drop-shadow(0 0 5px var(--c)); }
+.arrows .car { fill: #22303b; }
+
+.stack { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.stack:not(:empty) { margin-top: 10px; }
+.achip {
+  --c: var(--x); font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--c); color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.achip.sup { --c: #4b5c69; text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.statusline { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 14px; margin-top: 10px;
+              font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.statusline .warn { color: #ffd27a; }
+.statusline .bad { color: #ff9aa4; }
+.idle-hint { margin-top: 8px; font-size: 15px; color: var(--dim); }
+.idle-hint[hidden] { display: none; }
+
+/* Driving map: tilted street plane + flat overlay + HTML badges */
+.map-card { --haze: #0d141b; flex: 1; min-height: 180px; position: relative; overflow: hidden; padding: 0; background: #10161d; isolation: isolate; }
+.map-card.day { --haze: #d7dee4; background: #ebe8e1; }
+.map-plane { position: absolute; }
+.map-plane canvas { display: block; width: 100%; height: 100%; }
+#mapOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.map-haze { position: absolute; left: 0; right: 0; top: 0; height: 26%; background: linear-gradient(var(--haze) 20%, transparent); pointer-events: none; }
+.map-chip {
+  position: absolute; top: 10px; left: 10px; max-width: calc(100% - 20px); border: 0; border-radius: 999px;
+  padding: 7px 12px; font-size: 13px; font-weight: 700; background: rgba(16, 24, 32, .85); color: #e8eef3;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+.map-chip .cm { color: var(--ok); }
+.map-card.day .map-chip { background: rgba(255, 255, 255, .94); color: #202124; }
+.map-card.day .map-chip .cm { color: #188038; }
+.speed-bubble {
+  position: absolute; left: 10px; bottom: 12px; width: 60px; height: 60px; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #2b3138; color: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .45); font-variant-numeric: tabular-nums;
+}
+.map-card.day .speed-bubble { background: #fff; color: #202124; }
+.speed-bubble b { font-size: 24px; line-height: 1; }
+.speed-bubble small { font-size: 10px; font-weight: 700; opacity: .7; }
+.limit-sign {
+  position: absolute; left: 78px; bottom: 12px; background: #fff; color: #111; border: 2px solid #111; outline: 2px solid #fff;
+  border-radius: 6px; padding: 3px 6px 2px; text-align: center; line-height: 1; box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+}
+.limit-sign small { display: block; font-size: 8px; font-weight: 800; letter-spacing: .04em; }
+.limit-sign b { display: block; font-size: 22px; margin-top: 2px; }
+.map-msg {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px;
+  text-align: center; font-size: 15px; line-height: 1.4; color: #c4d0d9; background: rgba(10, 15, 20, .6);
+  pointer-events: none;   /* never blocks the city chip */
+}
+.map-chip { z-index: 2; }
+.map-msg[hidden], .speed-bubble[hidden], .limit-sign[hidden] { display: none; }
+.map-attrib { position: absolute; right: 6px; bottom: 4px; font-size: 9px; color: rgba(220, 230, 238, .6); pointer-events: none; }
+.map-card.day .map-attrib { color: rgba(60, 64, 67, .75); }
+
+/* Touch: the map handles drag / pinch itself, so the browser must not scroll or zoom the page there */
+.map-card { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+.map-chip { max-width: calc(100% - 72px); }
+.map-btn, .map-zoom button, .recenter {
+  border: 0; cursor: pointer; touch-action: manipulation;
+  background: rgba(16, 24, 32, .88); color: #e8eef3; box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+}
+.map-card.day .map-btn, .map-card.day .map-zoom button { background: #fff; color: #3c4043; }
+.map-btn { position: absolute; top: 8px; right: 10px; z-index: 2; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; }
+.map-btn svg, .recenter svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.map-zoom {
+  position: absolute; right: 10px; bottom: 22px; z-index: 2; display: flex; flex-direction: column;
+  border-radius: 21px; overflow: hidden; box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+}
+.map-zoom button { width: 42px; height: 42px; font-size: 24px; font-weight: 500; line-height: 1; box-shadow: none; }
+.map-zoom button + button { border-top: 1px solid rgba(128, 140, 150, .3); }
+.recenter {
+  position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 2;
+  display: flex; align-items: center; gap: 6px; padding: 10px 16px 10px 12px; border-radius: 999px;
+  font-size: 15px; font-weight: 700; background: #fff; color: #1a73e8;
+}
+.recenter svg { fill: #1a73e8; stroke: none; }
+.map-card.night .recenter { background: #2b3138; color: #8ab4f8; }
+.map-card.night .recenter svg { fill: #8ab4f8; }
+.recenter[hidden], .map-alert[hidden] { display: none; }
+
+/* Expanded map: banner over the map mirrors the alert card, which is hidden */
+.map-alert {
+  --c: var(--ka); position: absolute; left: 10px; right: 62px; top: 56px; z-index: 2;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 8px 14px; border-radius: 14px;
+  background: var(--c); color: #0b0f13; font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .45);
+}
+.map-alert b { font-size: 24px; font-weight: 900; line-height: 1; }
+.map-alert .mb { letter-spacing: -1px; font-size: 13px; }
+.map-expanded .hero { display: none; }
+
+.actions { flex: none; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px; }
+#muteBtn { font-size: 20px; }
+#muteBtn.on { border-color: var(--err); background: #34101a; color: #ffb3bb; }
+
+/* Tablets / desktop / phone in landscape: alert card left, map right */
+@media (min-width: 760px), (orientation: landscape) and (max-height: 540px) {
+  #view-drive { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .hero { grid-column: 1; grid-row: 1; overflow: auto; display: flex; flex-direction: column; justify-content: center; }
+  .map-card { grid-column: 2; grid-row: 1 / span 2; min-height: 0; }
+  .map-expanded #view-drive { grid-template-columns: minmax(0, 1fr); }
+  .map-expanded .map-card { grid-column: 1; grid-row: 1; }
+  .map-expanded .actions { grid-column: 1; grid-row: 2; }
+  .actions { grid-column: 1; grid-row: 2; }
+}
+@media (orientation: landscape) and (max-height: 540px) {
+  :root { --tabbar-h: 44px; }
+  .topbar { padding: 6px 16px 4px; }
+  .tabbar button { flex-direction: row; gap: 6px; }
+  #view-drive { gap: 8px; padding-bottom: 8px; }
+  .hero { padding: 6px 12px 8px; scrollbar-width: none; }
+  .band-label { font-size: clamp(40px, 14vh, 96px); }
+  .band-label.small { font-size: clamp(30px, 10vh, 56px); padding: 4px 0 2px; }
+  .band-sub { font-size: 16px; min-height: 20px; margin-top: 2px; }
+  .readout { margin-top: 6px; }
+  .bars { height: 32px; }
+  .arrows { width: 40px; height: 46px; }
+  .stack:not(:empty), .statusline { margin-top: 6px; }
+  .btn { min-height: 48px; }
+}
+
+/* ---------- History & Settings views ---------- */
+.view h2 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin: 12px 0 10px; }
+.count { font-weight: 600; margin-left: 6px; }
+.panel-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list li.empty { color: var(--dim); padding: 12px 0; font-size: 14px; line-height: 1.4; }
+.hrow { border-top: 1px solid var(--line); padding: 10px 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; }
+.hrow .when { font-variant-numeric: tabular-nums; color: var(--dim); font-size: 13px; }
+.hrow .main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.bandtag { font-weight: 900; color: var(--c); min-width: 2.2em; }
+.hrow .meta { grid-column: 1 / span 2; font-size: 12px; color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; }
+.hrow .meta a { color: #7fb8e6; }
+.hrow .act { grid-row: 1 / span 2; grid-column: 3; }
+.mini-bars { letter-spacing: -1px; font-size: 12px; color: var(--c); }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; border: 1px solid #3a4a56; color: #9fb0bd; }
+
+.settings h4 { margin: 18px 0 2px; font-size: 12px; letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
+.settings h4:first-child { margin-top: 10px; }
+.srow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 15px; min-height: 52px; }
+.srow small { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
+.srow input[type="number"] { width: 84px; }
+.srow input[type="number"], .srow select {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-width: 55%; flex: none;
+}
+.srow input[type="range"] { width: 50%; accent-color: var(--ok); }
+.srow input[type="checkbox"] { width: 24px; height: 24px; accent-color: var(--ok); flex: none; }
+.city-now { font-weight: 700; text-align: right; }
+.city-pick { padding: 2px 0 8px; }
+#citySearch {
+  width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; font-size: 16px;   /* 16px stops mobile browsers zooming on focus */
+}
+.city-opt {
+  width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line);
+  padding: 13px 4px; font-size: 16px; cursor: pointer;
+}
+:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+.about { font-size: 14px; line-height: 1.5; color: #b6c4ce; }
+.about p { margin: 8px 0; }
+
+/* ---------- Toast (sits above the tab bar) ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+  max-width: calc(100% - 32px); width: max-content; background: #17222c; border: 1px solid #2b3b48; border-radius: 14px;
+  padding: 12px 14px; display: flex; align-items: center; gap: 12px; font-size: 15px; z-index: 10;
+  transition: transform .25s, opacity .25s; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+.toast.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.toast button { background: none; border: 0; color: var(--ok); font-weight: 800; padding: 4px 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="shell" class="shell">
+  <header class="topbar">
+    <div class="brand">RADAR<span>LINK</span></div>
+    <div id="connStatus" class="pill" data-state="idle" role="status" aria-live="polite"><i></i><span>Disconnected</span></div>
+    <button id="connectBtn" class="btn head primary">Connect</button>
+  </header>
+
+  <div id="compatBanner" class="banner" hidden></div>
+
+  <main class="views">
+    <!-- ================= DRIVE: everything glanceable on one screen ================= -->
+    <section id="view-drive" class="view">
+      <div id="display" class="card hero" data-band="none">
+        <div id="bandLabel" class="band-label small">STANDBY</div>
+        <div class="band-sub"><span id="freq"></span><span id="bogeys" class="muted"></span></div>
+        <div class="readout">
+          <div id="bars" class="bars" aria-label="Signal strength"></div>
+          <svg class="arrows" viewBox="0 0 112 132" aria-label="Direction">
+            <polygon id="arFront" class="a" points="56,4 22,44 90,44"/>
+            <polygon id="arSideL" class="a" points="4,66 30,46 30,86"/>
+            <polygon id="arSideR" class="a" points="108,66 82,46 82,86"/>
+            <rect class="car" x="40" y="50" width="32" height="32" rx="8"/>
+            <polygon id="arRear" class="a" points="22,90 90,90 56,128"/>
+          </svg>
+        </div>
+        <div id="stack" class="stack"></div>
+        <div id="info" class="statusline"></div>
+        <div id="idleHint" class="idle-hint">Tap <b>Connect</b> for radar alerts. Cameras and the map run on GPS alone.</div>
+      </div>
+
+      <div id="mapBox" class="card map-card night" aria-label="Driving map">
+        <div id="mapPlane" class="map-plane"><canvas id="mapTiles"></canvas></div>
+        <div id="mapHaze" class="map-haze"></div>
+        <canvas id="mapOverlay"></canvas>
+        <button id="cityChip" class="map-chip">Set your city</button>
+        <button id="expandBtn" class="map-btn map-expand" aria-label="Expand map">
+          <svg class="ic-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>
+          <svg class="ic-shrink" viewBox="0 0 24 24" style="display:none"><path d="M20 10h-6V4M4 14h6v6M14 10l7-7M10 14l-7 7"/></svg>
+        </button>
+        <div id="mapAlert" class="map-alert" hidden></div>
+        <div class="map-zoom">
+          <button id="zoomInBtn" aria-label="Zoom in">+</button>
+          <button id="zoomOutBtn" aria-label="Zoom out">−</button>
+        </div>
+        <button id="recenterBtn" class="recenter" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 3l7 18-7-4-7 4z"/></svg>Re-center
+        </button>
+        <div id="speedBubble" class="speed-bubble" hidden><b id="speedVal">0</b><small class="unit">mph</small></div>
+        <div id="limitSign" class="limit-sign" hidden><small>SPEED<br>LIMIT</small><b id="limitVal"></b></div>
+        <div id="mapMsg" class="map-msg" hidden></div>
+        <div class="map-attrib">© OpenStreetMap contributors</div>
+      </div>
+
+      <div class="actions">
+        <button id="muteBtn" class="btn">🔊 Mute</button>
+        <button id="lockBtn" class="btn" disabled>False alert</button>
+      </div>
+    </section>
+
+    <!-- ================= HISTORY ================= -->
+    <section id="view-history" class="view" hidden>
+      <h2>Alert history <span id="histCount" class="count"></span></h2>
+      <div class="panel-tools">
+        <button id="exportBtn" class="btn sm">Export CSV</button>
+        <button id="clearHistBtn" class="btn sm">Clear</button>
+      </div>
+      <ul id="histList" class="list"></ul>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section id="view-settings" class="view settings" hidden>
+      <h4>Your city</h4>
+      <div class="srow"><span>Current city<small id="citySource">Not set</small></span><span id="cityNow" class="city-now">—</span></div>
+      <label class="srow"><span>Detect my city from GPS</span><input type="checkbox" id="set-cityFromGps" data-setting="cityFromGps"></label>
+      <div class="city-pick">
+        <input id="citySearch" type="search" placeholder="Search US cities, e.g. Austin, TX" autocomplete="off"
+               autocapitalize="words" enterkeyhint="search" aria-label="Search US cities">
+        <ul id="cityResults" class="list"></ul>
+      </div>
+
+      <h4>Connection</h4>
+      <label class="srow"><span>Auto-reconnect to detector</span><input type="checkbox" data-setting="autoReconnect"></label>
+      <!-- Test mode, only shown when the page is opened with #demo at the end of its address -->
+      <div id="demoRow" class="srow" hidden><span>Test drive<small>Simulated alerts for testing without a V1</small></span><button id="demoBtn" class="btn sm">Start</button></div>
+
+      <h4>Alerts</h4>
+      <label class="srow"><span>Speed &amp; red-light cameras<small>From OpenStreetMap, announced as you approach</small></span><input type="checkbox" data-setting="cameraAlerts"></label>
+      <label class="srow"><span>Volume</span><input type="range" min="0" max="100" data-setting="volume"></label>
+      <label class="srow"><span>Voice alerts<small>“Ka band, front, strong”</small></span><input type="checkbox" data-setting="voice"></label>
+      <label class="srow"><span>Vibration</span><input type="checkbox" data-setting="vibrate"></label>
+      <label class="srow"><span>Auto-mute below (<span class="unit">mph</span>)<small>0 = off</small></span><input type="number" min="0" max="100" step="1" inputmode="numeric" data-setting="autoMuteSpeed"></label>
+      <label class="srow"><span>Laser always sounds<small>Ignores mute</small></span><input type="checkbox" data-setting="laserOverride"></label>
+      <label class="srow"><span>Un-mute when alerts clear</span><input type="checkbox" data-setting="muteResetOnClear"></label>
+
+      <h4>Town filtering</h4>
+      <label class="srow"><span>City mode<small>Auto: inside city limits, or below the speed set here</small></span>
+        <select data-setting="cityMode"><option value="off">Off</option><option value="on">On</option><option value="auto">Auto</option></select></label>
+      <label class="srow"><span>Also city mode below (<span class="unit">mph</span>)</span><input type="number" min="0" max="100" step="1" inputmode="numeric" data-setting="citySpeed"></label>
+      <label class="srow"><span>Ignore X band</span>
+        <select data-setting="ignoreX"><option value="never">Never</option><option value="city">In city</option><option value="always">Always</option></select></label>
+      <label class="srow"><span>In city, ignore K below</span>
+        <select data-setting="cityKMinBars"><option value="0">Off</option><option value="2">2 bars</option><option value="3">3 bars</option><option value="4">4 bars</option><option value="5">5 bars</option></select></label>
+
+      <h4>False-alert lockouts <span id="loCount" class="count"></span></h4>
+      <label class="srow"><span>Radius (metres)</span><input type="number" min="30" max="1000" step="10" inputmode="numeric" data-setting="lockoutRadius"></label>
+      <label class="srow"><span>Frequency tolerance (± MHz)</span><input type="number" min="1" max="100" step="1" inputmode="numeric" data-setting="lockoutFreqTol"></label>
+      <ul id="loList" class="list"></ul>
+      <div class="panel-tools" style="margin-top:8px"><button id="clearLoBtn" class="btn sm">Remove all lockouts</button></div>
+
+      <h4>Display</h4>
+      <label class="srow"><span>Map style</span>
+        <select data-setting="mapStyle"><option value="auto">Auto (day / night)</option><option value="day">Day</option><option value="night">Night</option></select></label>
+      <label class="srow"><span>Units</span><select data-setting="units"><option value="mph">mph</option><option value="kmh">km/h</option></select></label>
+      <label class="srow"><span>Keep screen awake</span><input type="checkbox" data-setting="keepAwake"></label>
+      <label class="srow"><span>Dim display</span><input type="checkbox" data-setting="dim"></label>
+      <div class="panel-tools" style="margin-top:10px"><button id="resetSettingsBtn" class="btn sm">Reset settings</button></div>
+
+      <h4>About</h4>
+      <div class="about">
+        <p>Needs Chrome on Android over <b>https://</b>. iPhone and iPad can't use Web Bluetooth, so they get the map and cameras but no V1 alerts.</p>
+        <p>To pair, plug the V1connection LE into the V1, tap <b>Connect</b> and pick the <b>V1C-LE…</b> device. Close the official app first; only one app can connect at a time.</p>
+        <p>Keep RadarLink on screen while driving, because Android delays sound from background tabs. Laser alerts are never filtered or locked out.</p>
+        <p>Map data and tiles © OpenStreetMap contributors. Camera locations come from OpenStreetMap and can be incomplete. City list: U.S. Census Bureau 2025 Gazetteer.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav id="tabbar" class="tabbar" role="tablist">
+    <button role="tab" data-tab="drive" aria-selected="true">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 12l6-6"/></svg>Drive<i class="dot"></i></button>
+    <button role="tab" data-tab="history" aria-selected="false">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>History</button>
+    <button role="tab" data-tab="settings" aria-selected="false">
+      <svg viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.5"/><circle cx="10" cy="17" r="2.5"/></svg>Settings</button>
+  </nav>
+</div>
+
+<div id="toast" class="toast" role="status"><span id="toastMsg"></span></div>
+
+<!-- Every US city, town and village (U.S. Census Bureau). Optional: the app runs without it. -->
+<script src="us-cities.js"></script>
+<script>
+'use strict';
+
+/* =====================================================================
+   1. SETTINGS, PERSISTENCE & SHARED STATE
+   ===================================================================== */
+const DEFAULTS = {
+  units: 'mph',
+  volume: 70,
+  voice: true,
+  vibrate: true,
+  autoMuteSpeed: 10,       // in settings.units; 0 = disabled
+  laserOverride: true,     // laser beeps even when muted
+  muteResetOnClear: true,  // a mute pressed during an alert ends when that alert clears
+  cityMode: 'auto',        // 'off' | 'on' | 'auto'
+  citySpeed: 35,           // auto city mode below this speed
+  ignoreX: 'city',         // 'never' | 'city' | 'always'
+  cityKMinBars: 3,         // in city mode, K alerts weaker than this are ignored (0 = off)
+  lockoutRadius: 150,      // metres
+  lockoutFreqTol: 10,      // ± MHz
+  keepAwake: true,
+  autoReconnect: true,
+  dim: false,
+  cameraAlerts: true,      // speed / red-light cameras from OpenStreetMap
+  mapStyle: 'auto',        // 'auto' | 'day' | 'night'
+  cityFromGps: true,       // detect the current city from GPS
+  homeCity: '',            // chosen city, as a us-cities.js row "ST|Name|lat|lon|radius_km"
+};
+
+/** localStorage wrapper — storage can be unavailable (private mode etc.), so never throw. */
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem('radarlink.' + key); return v == null ? fallback : JSON.parse(v); }
+    catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem('radarlink.' + key, JSON.stringify(value)); } catch { /* ignore */ }
+  },
+};
+
+const settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
+let alertLog = store.get('history', []);    // newest first
+let lockouts = store.get('lockouts', []);
+const MAX_HISTORY = 300;
+
+/** Band metadata. rank = threat level used for priority and colouring. */
+const BANDS = {
+  Laser: { rank: 4, css: '--laser', word: 'Laser',   tones: [1900, 2500] },
+  Ka:    { rank: 3, css: '--ka',    word: 'Ka band', tones: [1350, 1350] },
+  Ku:    { rank: 2, css: '--ku',    word: 'Ku band', tones: [1100] },
+  K:     { rank: 2, css: '--k',     word: 'K band',  tones: [950] },
+  X:     { rank: 1, css: '--x',     word: 'X band',  tones: [640] },
+};
+
+/** Live application state. */
+const app = {
+  alerts: [],              // current alert table after filtering (what is drawn)
+  tracked: [],             // alerts followed across frames → history + announcements
+  muted: false,
+  muteTiedToAlert: false,  // mute was pressed while alerting (for muteResetOnClear)
+  lastLiveAlertAt: 0,
+  nextTrackId: 1,
+};
+
+/* =====================================================================
+   2. ESP PROTOCOL  —  Valentine One Gen2 ⇄ V1connection LE
+   ---------------------------------------------------------------------
+   ESP ("Extended Serial Protocol") packet layout, as carried over BLE:
+
+     0xAA | 0xD0|dest | 0xE0|origin | packetId | len | payload… | [checksum] | 0xAB
+     SOF                                                                        EOF
+
+   • dest / origin are 4-bit ESP device IDs (see ESP.DEV).
+   • len counts the payload bytes PLUS the checksum byte when one is present.
+   • checksum = (sum of every byte from SOF through the last payload byte) & 0xFF.
+     It is present on packets to or from a "V1 with checksum" (ID 0xA), which
+     includes the V1 Gen2.
+   • A BLE notification can hold a partial packet or several packets, so all
+     incoming bytes go through EspFramer, which reassembles complete frames.
+
+   Packets used here:
+     0x31 infDisplayData   V1 → all   front-panel mirror (bands, arrows, bar graph)
+     0x41 reqStartAlertData app → V1  ask V1 to stream its alert table
+     0x42 reqStopAlertData  app → V1
+     0x43 respAlertData    V1 → app   one packet per alert: index/count, freq,
+                                      front/rear signal, band+arrow bits, aux
+   ===================================================================== */
+const ESP = {
+  SOF: 0xAA,
+  EOF: 0xAB,
+  DEV: {
+    V1CONNECTION: 0x6,     // ID this app uses as the packet origin
+    GENERAL_BROADCAST: 0x8,
+    V1_NO_CHECKSUM: 0x9,   // legacy V1
+    V1_CHECKSUM: 0xA,      // V1 Gen2 / checksum-capable V1
+  },
+  PID: {
+    INF_DISPLAY_DATA: 0x31,
+    REQ_START_ALERT_DATA: 0x41,
+    REQ_STOP_ALERT_DATA: 0x42,
+    RESP_ALERT_DATA: 0x43,
+  },
+  MAX_LEN: 64,             // sanity limit for the length byte while resyncing
+};
+
+/**
+ * Raw signal byte → bar count (1–8). Each array holds the minimum raw value for
+ * 1..8 bars. These curves approximate the V1's front-panel bar graph; tune them
+ * against your own unit if the bars disagree with the detector's display.
+ */
+const BAR_THRESHOLDS = {
+  Ka: [0x8F, 0x96, 0x9D, 0xA4, 0xAB, 0xB2, 0xB9, 0xC0],
+  K:  [0x87, 0x8F, 0x97, 0x9F, 0xA7, 0xAF, 0xB7, 0xBF],
+  Ku: [0x87, 0x8F, 0x97, 0x9F, 0xA7, 0xAF, 0xB7, 0xBF],
+  X:  [0x95, 0x9C, 0xA3, 0xAA, 0xB1, 0xB8, 0xBF, 0xC6],
+};
+
+function rawToBars(band, raw) {
+  if (band === 'Laser') return 8;
+  const t = BAR_THRESHOLDS[band];
+  if (!t) return raw > 0 ? 1 : 0;
+  let bars = 0;
+  while (bars < 8 && raw >= t[bars]) bars++;
+  return raw > 0 ? Math.max(1, bars) : 0;  // any reported alert shows at least 1 bar
+}
+
+/** Inverse of rawToBars — used by Demo mode to synthesise realistic raw bytes. */
+function barsToRaw(band, bars) {
+  if (band === 'Laser') return 0xFF;
+  const t = BAR_THRESHOLDS[band] || BAR_THRESHOLDS.K;
+  return Math.min(0xFF, t[Math.max(1, Math.min(8, bars)) - 1] + 2);
+}
+
+const hasChecksum = (dest, origin) => dest === ESP.DEV.V1_CHECKSUM || origin === ESP.DEV.V1_CHECKSUM;
+
+/** Build a complete ESP frame (Uint8Array) ready to write to the BLE characteristic. */
+function buildPacket({ dest, origin = ESP.DEV.V1CONNECTION, id, payload = [] }) {
+  const cs = hasChecksum(dest, origin);
+  const bytes = [ESP.SOF, 0xD0 | dest, 0xE0 | origin, id, payload.length + (cs ? 1 : 0), ...payload];
+  if (cs) bytes.push(bytes.reduce((sum, b) => sum + b, 0) & 0xFF);
+  bytes.push(ESP.EOF);
+  return Uint8Array.from(bytes);
+}
+
+/** Decode one complete frame. Returns null if malformed or the checksum fails. */
+function decodePacket(frame) {
+  if ((frame[1] & 0xF0) !== 0xD0 || (frame[2] & 0xF0) !== 0xE0) return null;
+  const dest = frame[1] & 0x0F;
+  const origin = frame[2] & 0x0F;
+  const id = frame[3];
+  const len = frame[4];
+  let payload = frame.slice(5, 5 + len);
+  if (hasChecksum(dest, origin)) {
+    if (len < 1) return null;
+    let sum = 0;
+    for (let i = 0; i < 5 + len - 1; i++) sum += frame[i];
+    if ((sum & 0xFF) !== frame[5 + len - 1]) { console.warn('ESP checksum mismatch', frame); return null; }
+    payload = payload.slice(0, -1);
+  }
+  return { dest, origin, id, payload };
+}
+
+/** Reassembles ESP frames from an arbitrary stream of byte chunks. */
+class EspFramer {
+  constructor(onPacket) { this.buf = []; this.onPacket = onPacket; }
+  push(chunk) {
+    for (const b of chunk) this.buf.push(b);
+    for (;;) {
+      const start = this.buf.indexOf(ESP.SOF);
+      if (start < 0) { this.buf.length = 0; return; }
+      if (start > 0) this.buf.splice(0, start);           // drop garbage before SOF
+      if (this.buf.length < 5) return;                     // need header
+      const len = this.buf[4];
+      if (len > ESP.MAX_LEN) { this.buf.shift(); continue; } // not a real header — resync
+      const total = 5 + len + 1;                            // header + payload/cs + EOF
+      if (this.buf.length < total) return;                  // wait for the rest
+      if (this.buf[total - 1] !== ESP.EOF) { this.buf.shift(); continue; }
+      const frame = this.buf.splice(0, total);
+      const pkt = decodePacket(frame);
+      if (pkt) this.onPacket(pkt);
+    }
+  }
+  reset() { this.buf.length = 0; }
+}
+
+/**
+ * infDisplayData (0x31) payload, 8 bytes:
+ *   [0] bogey-counter 7-seg image 1   [1] bogey-counter image 2
+ *   [2] signal bar graph, bit0..bit7 = LED 1..8
+ *   [3] band/arrow image 1  [4] band/arrow image 2 (OR'd so blinking segments count)
+ *       bit0 Laser, bit1 Ka, bit2 K, bit3 X, bit4 Mute, bit5 Front, bit6 Side, bit7 Rear
+ *   [5..7] aux bytes
+ */
+function parseDisplayData(p) {
+  if (p.length < 5) return null;
+  const ba = p[3] | p[4];
+  let bars = 0;
+  for (let i = 0; i < 8; i++) if (p[2] & (1 << i)) bars++;
+  return {
+    bars,
+    laser: !!(ba & 0x01), ka: !!(ba & 0x02), k: !!(ba & 0x04), x: !!(ba & 0x08),
+    v1Muted: !!(ba & 0x10),
+    front: !!(ba & 0x20), side: !!(ba & 0x40), rear: !!(ba & 0x80),
+  };
+}
+
+/**
+ * respAlertData (0x43) payload, 7 bytes:
+ *   [0] high nibble = alert index (1-based), low nibble = alert count (0 = no alerts)
+ *   [1..2] frequency in MHz, big-endian (0 for laser)
+ *   [3] front signal strength (raw)   [4] rear signal strength (raw)
+ *   [5] band/arrow: bit0 Laser, bit1 Ka, bit2 K, bit3 X, bit4 Ku, bit5 Front, bit6 Side, bit7 Rear
+ *   [6] aux0: bit7 = this is the V1's priority alert
+ */
+function parseAlertData(p) {
+  if (p.length < 7) return null;
+  const index = p[0] >> 4, count = p[0] & 0x0F;
+  if (count === 0) return { index: 0, count: 0 };
+  const ba = p[5];
+  const band = ba & 0x01 ? 'Laser' : ba & 0x02 ? 'Ka' : ba & 0x04 ? 'K' : ba & 0x08 ? 'X' : ba & 0x10 ? 'Ku' : null;
+  if (!band) return { index, count, invalid: true };
+  const rawFront = p[3], rawRear = p[4];
+  const freq = (p[1] << 8) | p[2];
+  return {
+    index, count, band,
+    freq: band === 'Laser' || !freq ? null : freq,
+    bars: rawToBars(band, Math.max(rawFront, rawRear)),
+    front: !!(ba & 0x20), side: !!(ba & 0x40), rear: !!(ba & 0x80),
+    priority: !!(p[6] & 0x80),
+    rawFront, rawRear,
+  };
+}
+
+/** Collects the per-alert respAlertData packets into a complete alert table. */
+const alertTable = {
+  count: 0, items: [],
+  add(a, onComplete) {
+    if (a.count === 0) { this.count = 0; this.items = []; onComplete([]); return; }
+    if (a.index < 1 || a.index > a.count) return;
+    if (a.index === 1 || a.count !== this.count) { this.count = a.count; this.items = new Array(a.count); }
+    this.items[a.index - 1] = a;
+    if (this.items.filter(Boolean).length === this.count) {
+      const table = this.items.filter(x => !x.invalid);
+      this.items = new Array(this.count);
+      onComplete(table);
+    }
+  },
+};
+
+/** Fallback when no alert table is streaming: one alert synthesised from the display mirror. */
+function alertsFromDisplay(d) {
+  if (!d) return [];
+  const band = d.laser ? 'Laser' : d.ka ? 'Ka' : d.k ? 'K' : d.x ? 'X' : null;
+  if (!band) return [];
+  return [{ band, freq: null, bars: band === 'Laser' ? 8 : Math.max(1, d.bars),
+            front: d.front, side: d.side, rear: d.rear, priority: true, fromDisplay: true }];
+}
+
+/** Single entry point for all incoming bytes — BLE notifications and Demo mode alike. */
+const framer = new EspFramer(onEspPacket);
+const ingestBytes = bytes => framer.push(bytes);
+
+function onEspPacket(pkt) {
+  const now = performance.now();
+  conn.lastPacketAt = now;
+  if (pkt.origin === ESP.DEV.V1_CHECKSUM || pkt.origin === ESP.DEV.V1_NO_CHECKSUM) conn.v1Id = pkt.origin;
+
+  switch (pkt.id) {
+    case ESP.PID.INF_DISPLAY_DATA: {
+      const d = parseDisplayData(pkt.payload);
+      if (!d) return;
+      conn.display = d;
+      // If the alert table isn't streaming (yet), ask for it and fall back to the display mirror.
+      if (now - conn.lastAlertDataAt > 2000) {
+        requestAlertData();
+        ingestAlertTable(alertsFromDisplay(d));
+      }
+      break;
+    }
+    case ESP.PID.RESP_ALERT_DATA: {
+      const a = parseAlertData(pkt.payload);
+      if (!a) return;
+      conn.lastAlertDataAt = now;
+      alertTable.add(a, ingestAlertTable);
+      break;
+    }
+    default:
+      // Other ESP traffic (version responses, other accessories) is ignored.
+      break;
+  }
+}
+
+function requestAlertData() {
+  const now = performance.now();
+  if (conn.v1Id == null || now - conn.lastAlertReqAt < 3000) return;
+  conn.lastAlertReqAt = now;
+  sendPacket(ESP.PID.REQ_START_ALERT_DATA);
+}
+
+/** Send an ESP request to the V1 (or to the simulator in Demo mode). */
+async function sendPacket(id, payload = []) {
+  const bytes = buildPacket({ dest: conn.v1Id ?? ESP.DEV.V1_CHECKSUM, id, payload });
+  if (Demo.active) { Demo.receive(bytes); return; }
+  const ch = conn.writeChar;
+  if (!ch) return;
+  try {
+    if (ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(bytes);
+    else await ch.writeValue(bytes);
+  } catch (e) { console.warn('ESP write failed', e); }
+}
+
+/* =====================================================================
+   3. BLUETOOTH CONNECTION (Web Bluetooth → V1connection LE)
+   ===================================================================== */
+const V1C = {
+  SERVICE:          '92a0aff4-9e05-11e2-aa59-f23c91aec05e',
+  V1_OUT_SHORT:     '92a0b2ce-9e05-11e2-aa59-f23c91aec05e', // notify: V1 → phone (ESP bytes)
+  CLIENT_OUT_SHORT: '92a0b6d4-9e05-11e2-aa59-f23c91aec05e', // write:  phone → V1 (ESP bytes)
+};
+
+const conn = {
+  state: 'idle',
+  device: null, notifyChar: null, writeChar: null,
+  userDisconnect: false, retry: 0, retryTimer: null, connecting: false,
+  v1Id: null, display: null,
+  lastPacketAt: 0, lastAlertDataAt: -Infinity, lastAlertReqAt: -Infinity,
+};
+
+/** False when the page is embedded in a frame that blocks a feature (e.g. the claude.ai artifact viewer). */
+function policyAllows(feature) {
+  try {
+    const p = document.permissionsPolicy || document.featurePolicy;
+    return p ? p.allowsFeature(feature) : true;
+  } catch { return true; }
+}
+const bleSupported = () => 'bluetooth' in navigator && policyAllows('bluetooth');
+const bleBlockedByFrame = () => 'bluetooth' in navigator && !policyAllows('bluetooth');
+
+function resetLink() {
+  conn.v1Id = null; conn.display = null;
+  conn.lastPacketAt = performance.now(); conn.lastAlertDataAt = -Infinity; conn.lastAlertReqAt = -Infinity;
+  framer.reset();
+}
+
+async function connectBle() {
+  if (!bleSupported()) {
+    toast(isIOS() ? 'Web Bluetooth isn’t available on iOS. Use Chrome on Android.' : 'This browser has no Web Bluetooth. Use Chrome on Android.');
+    return;
+  }
+  if (Demo.active) Demo.stop();
+  startGps();
+  try {
+    if (navigator.bluetooth.getAvailability && !(await navigator.bluetooth.getAvailability())) {
+      toast('Bluetooth is off or unavailable on this device.');
+      return;
+    }
+  } catch { /* ignore */ }
+  setConn('scanning');
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [V1C.SERVICE] }, { namePrefix: 'V1C' }],
+      optionalServices: [V1C.SERVICE],
+    });
+    attachDevice(device);
+    conn.userDisconnect = false;
+    conn.retry = 0;
+    await gattConnect();
+  } catch (e) {
+    if (e.name === 'NotFoundError') setConn('idle');            // user cancelled the chooser
+    else if (conn.device && !conn.userDisconnect) scheduleReconnect();
+    else setConn('error', e.message);
+  }
+}
+
+function attachDevice(device) {
+  if (conn.device && conn.device !== device) conn.device.removeEventListener('gattserverdisconnected', onBleDisconnected);
+  conn.device = device;
+  device.addEventListener('gattserverdisconnected', onBleDisconnected);
+}
+
+/** Connect GATT, find the V1connection characteristics and subscribe to notifications. */
+async function gattConnect() {
+  if (conn.connecting) return;
+  conn.connecting = true;
+  setConn('connecting');
+  try {
+    const server = await conn.device.gatt.connect();
+    const svc = await server.getPrimaryService(V1C.SERVICE);
+    const notify = await svc.getCharacteristic(V1C.V1_OUT_SHORT);
+    const write = await svc.getCharacteristic(V1C.CLIENT_OUT_SHORT);
+    notify.addEventListener('characteristicvaluechanged', onBleNotify);
+    await notify.startNotifications();
+    conn.notifyChar = notify;
+    conn.writeChar = write;
+    conn.retry = 0;
+    resetLink();
+    setConn('connected');
+    updateWakeLock();
+  } finally {
+    conn.connecting = false;
+  }
+}
+
+function onBleNotify(e) {
+  const dv = e.target.value;
+  ingestBytes(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
+}
+
+function onBleDisconnected() {
+  conn.notifyChar = conn.writeChar = null;
+  ingestAlertTable([]);                       // never leave stale alerts on screen
+  if (conn.userDisconnect || Demo.active) { setConn(Demo.active ? 'demo' : 'idle'); return; }
+  Sound.disconnectChime();
+  if (navigator.vibrate && settings.vibrate) navigator.vibrate([400, 150, 400]);
+  toast('Detector connection lost — reconnecting…');
+  scheduleReconnect();
+}
+
+/** Exponential back-off reconnect: 1 s, 2 s, 4 s … capped at 15 s, until it works or the user stops it. */
+function scheduleReconnect(delayOverride) {
+  clearTimeout(conn.retryTimer);
+  if (!conn.device || conn.userDisconnect) return;
+  const delay = delayOverride ?? Math.min(15000, 1000 * 2 ** conn.retry);
+  conn.retry++;
+  setConn('reconnecting', `attempt ${conn.retry}`);
+  conn.retryTimer = setTimeout(async () => {
+    if (conn.userDisconnect || Demo.active) return;
+    try { await gattConnect(); toast('Detector reconnected'); }
+    catch (e) { console.warn('Reconnect failed', e); scheduleReconnect(); }
+  }, delay);
+}
+
+function disconnectBle() {
+  conn.userDisconnect = true;
+  clearTimeout(conn.retryTimer);
+  if (conn.device?.gatt?.connected) conn.device.gatt.disconnect();
+  conn.notifyChar = conn.writeChar = null;
+  ingestAlertTable([]);
+  setConn('idle');
+  updateWakeLock();
+}
+
+/** On load, reconnect to a previously-paired detector if the browser exposes getDevices(). */
+async function restorePairedDevice() {
+  if (!settings.autoReconnect || !bleSupported() || !navigator.bluetooth.getDevices) return;
+  try {
+    const devices = await navigator.bluetooth.getDevices();
+    const d = devices.find(x => /^V1C/i.test(x.name || '')) || devices[0];
+    if (!d) return;
+    attachDevice(d);
+    conn.userDisconnect = false;
+    conn.retry = 0;
+    startGps();
+    scheduleReconnect(300);
+  } catch (e) { console.info('getDevices unavailable', e); }
+}
+
+/** Link watchdog: flags silent links and forces a reconnect if the V1 stops talking. */
+function linkWatchdog() {
+  if (conn.state !== 'connected' && conn.state !== 'nodata') return;
+  const silent = performance.now() - conn.lastPacketAt;
+  if (silent > 12000 && conn.device?.gatt?.connected) {
+    conn.device.gatt.disconnect();            // fires gattserverdisconnected → auto-reconnect
+  } else if (silent > 3000) {
+    if (conn.state !== 'nodata') { setConn('nodata'); ingestAlertTable([]); }
+  } else if (conn.state === 'nodata') {
+    setConn('connected');
+  }
+}
+
+/* =====================================================================
+   4. DEMO MODE — simulated drive that emits real ESP byte streams
+   ---------------------------------------------------------------------
+   The simulator drives a ~2.2 km loop (a slow "town" quarter, then highway)
+   and encodes alerts as genuine infDisplayData / respAlertData packets, split
+   into BLE-sized chunks, so the full protocol parser is exercised. Fixed
+   sources (a door opener, an X-band sign, a parked Ka unit on odd laps)
+   repeat every lap, so lockouts can be tested on the next pass.
+   ===================================================================== */
+const Demo = {
+  active: false, timer: null, alertDataOn: false,
+  CENTER: { lat: 40.0150, lon: -105.2705 }, R: 350,
+  theta: 0, speed: 11, lap: 0, lastTick: 0, events: [], nextEventAt: 0,
+
+  FIXED: [
+    { name: 'door opener', band: 'K',  freq: 24199, angDeg: 40,  off: 25, range: 140, max: 3, present: () => true },
+    { name: 'X-band sign', band: 'X',  freq: 10525, angDeg: 200, off: 40, range: 330, max: 5, present: () => true },
+    { name: 'parked Ka',   band: 'Ka', freq: 34712, angDeg: 290, off: 15, range: 480, max: 8, present: lap => lap % 2 === 1 },
+  ],
+
+  /** Moving threats. f(t, dur) returns {bars, dirs} or null (silent this instant). */
+  EVENTS: [
+    { w: 3, make: () => ({ band: 'K', freq: 24125 + rint(-3, 3), dur: 10 + Math.random() * 8,       // blind-spot sensor
+        f: t => ({ bars: 1 + (Math.random() < 0.25 ? 1 : 0), dirs: (t % 6) < 3 ? { rear: 1 } : { side: 1 } }) }) },
+    { w: 2, make: () => ({ band: 'Ka', freq: pick([34700, 35500, 33800]) + rint(-4, 4), dur: 14,     // patrol car passing
+        f: (t, d) => {
+          const x = t / d;
+          if (x < 0.55) return { bars: 1 + Math.round(7 * (x / 0.55) ** 1.6), dirs: { front: 1 } };
+          if (x < 0.65) return { bars: 8, dirs: { side: 1 } };
+          return { bars: Math.max(1, Math.round(8 * (1 - (x - 0.65) / 0.35))), dirs: { rear: 1 } };
+        } }) },
+    { w: 1, make: () => ({ band: 'Laser', freq: 0, dur: 3.5,                                           // laser gun
+        f: t => (t % 1) < 0.7 ? { bars: 8, dirs: { front: 1 } } : null }) },
+    { w: 2, make: () => ({ band: 'K', freq: 24150 + rint(-5, 5), dur: 5.5,                              // instant-on K
+        f: t => t < 1.2 ? null : { bars: 6 + rint(0, 2), dirs: { front: 1 } } }) },
+  ],
+
+  start() {
+    if (conn.device) disconnectBle();
+    const ci = cityInfo();                                     // drive the test loop around your city
+    this.CENTER = ci ? { lat: ci.city.lat, lon: ci.city.lon } : { lat: 40.0150, lon: -105.2705 };
+    Object.assign(this, { active: true, alertDataOn: false, theta: 0, speed: 11, lap: 0, events: [],
+                          lastTick: performance.now(), nextEventAt: performance.now() + 8000 });
+    this.framer = new EspFramer(pkt => this.onAppPacket(pkt));
+    resetLink();
+    setConn('demo');
+    this.timer = setInterval(() => this.tick(), 100);
+    updateWakeLock();
+    toast('Demo drive started', null, 2000);
+  },
+
+  stop() {
+    clearInterval(this.timer);
+    this.active = false;
+    gps.sim = null;
+    ingestAlertTable([]);
+    setConn('idle');
+    updateWakeLock();
+  },
+
+  /** Bytes the app "writes" to the simulated V1. */
+  receive(bytes) { this.framer.push(bytes); },
+  onAppPacket(pkt) {
+    if (pkt.id === ESP.PID.REQ_START_ALERT_DATA) this.alertDataOn = true;
+    if (pkt.id === ESP.PID.REQ_STOP_ALERT_DATA) this.alertDataOn = false;
+  },
+
+  tick() {
+    const now = performance.now();
+    const dt = Math.min(0.5, (now - this.lastTick) / 1000);
+    this.lastTick = now;
+
+    // --- Vehicle motion around the loop ---
+    const TAU = Math.PI * 2;
+    const town = this.theta < Math.PI / 2;
+    const target = town ? 11.2 : 29;                       // ≈25 mph town, ≈65 mph highway
+    this.speed += Math.max(-3 * dt, Math.min(3 * dt, target - this.speed));
+    this.theta += this.speed * dt / this.R;
+    if (this.theta >= TAU) { this.theta -= TAU; this.lap++; }
+    const p = { x: this.R * Math.cos(this.theta), y: this.R * Math.sin(this.theta) };
+    const h = { x: -Math.sin(this.theta), y: Math.cos(this.theta) };   // counter-clockwise heading
+    const ll = this.toLatLon(p);
+    gps.sim = { lat: ll.lat, lon: ll.lon, acc: 5, speed: this.speed,
+                heading: (Math.atan2(h.x, h.y) * 180 / Math.PI + 360) % 360, ts: Date.now(), src: 'sim' };
+
+    // --- Fixed roadside sources ---
+    const alerts = [];
+    for (const s of this.FIXED) {
+      if (!s.present(this.lap)) continue;
+      const a = s.angDeg * Math.PI / 180;
+      const v = { x: (this.R + s.off) * Math.cos(a) - p.x, y: (this.R + s.off) * Math.sin(a) - p.y };
+      const d = Math.hypot(v.x, v.y);
+      if (d > s.range) continue;
+      const rel = Math.abs(Math.atan2(h.x * v.y - h.y * v.x, h.x * v.x + h.y * v.y)) * 180 / Math.PI;
+      const bars = Math.max(1, Math.round(s.max * (1 - d / s.range) ** 0.8));
+      alerts.push({ band: s.band, freq: s.freq + rint(-1, 1), bars,
+                    dirs: rel < 50 ? { front: 1 } : rel > 130 ? { rear: 1 } : { side: 1 } });
+    }
+
+    // --- Random moving threats ---
+    if (now > this.nextEventAt && this.events.length === 0) {
+      const total = this.EVENTS.reduce((s, e) => s + e.w, 0);
+      let r = Math.random() * total;
+      const gen = this.EVENTS.find(e => (r -= e.w) < 0) || this.EVENTS[0];
+      this.events.push({ ...gen.make(), start: now });
+      this.nextEventAt = now + 15000 + Math.random() * 20000;
+    }
+    this.events = this.events.filter(ev => (now - ev.start) / 1000 < ev.dur);
+    for (const ev of this.events) {
+      const st = ev.f((now - ev.start) / 1000, ev.dur);
+      if (st) alerts.push({ band: ev.band, freq: ev.freq, bars: st.bars, dirs: st.dirs });
+    }
+
+    this.emit(alerts.slice(0, 15));
+  },
+
+  toLatLon(p) {
+    const lat = this.CENTER.lat + p.y / 111320;
+    return { lat, lon: this.CENTER.lon + p.x / (111320 * Math.cos(this.CENTER.lat * Math.PI / 180)) };
+  },
+
+  /** Encode the simulated alerts as ESP packets and push them through the real parser. */
+  emit(alerts) {
+    const BAND_BIT = { Laser: 0x01, Ka: 0x02, K: 0x04, X: 0x08, Ku: 0x10 };
+    const arrowBits = d => (d.front ? 0x20 : 0) | (d.side ? 0x40 : 0) | (d.rear ? 0x80 : 0);
+    let lead = null;
+    for (const a of alerts) if (!lead || BANDS[a.band].rank * 10 + a.bars > BANDS[lead.band].rank * 10 + lead.bars) lead = a;
+
+    const V1 = ESP.DEV.V1_CHECKSUM;
+    const packets = [];
+    // Display mirror: all bands + all arrows lit, bar graph of the priority alert.
+    let ba = 0;
+    for (const a of alerts) ba |= (a.band === 'Ku' ? 0 : BAND_BIT[a.band]) | arrowBits(a.dirs);
+    const bargraph = lead ? (1 << lead.bars) - 1 : 0;
+    packets.push(buildPacket({ dest: ESP.DEV.GENERAL_BROADCAST, origin: V1, id: ESP.PID.INF_DISPLAY_DATA,
+                               payload: [0, 0, bargraph, ba, ba, 0x08, 0, 0] }));
+    // Alert table (only once the app has requested it, like a real V1).
+    if (this.alertDataOn) {
+      if (!alerts.length) {
+        packets.push(buildPacket({ dest: ESP.DEV.V1CONNECTION, origin: V1, id: ESP.PID.RESP_ALERT_DATA, payload: [0, 0, 0, 0, 0, 0, 0] }));
+      }
+      alerts.forEach((a, i) => {
+        const raw = barsToRaw(a.band, a.bars);
+        const front = a.dirs.front || a.dirs.side ? raw : rint(0, 0x40);
+        const rear = a.dirs.rear ? raw : rint(0, 0x40);
+        packets.push(buildPacket({ dest: ESP.DEV.V1CONNECTION, origin: V1, id: ESP.PID.RESP_ALERT_DATA, payload: [
+          ((i + 1) << 4) | alerts.length, (a.freq >> 8) & 0xFF, a.freq & 0xFF, front, rear,
+          BAND_BIT[a.band] | arrowBits(a.dirs), a === lead ? 0x80 : 0x00,
+        ] }));
+      });
+    }
+    // Concatenate and deliver in random 12–20 byte chunks, like BLE notifications.
+    const stream = new Uint8Array(packets.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of packets) { stream.set(p, o); o += p.length; }
+    for (let i = 0; i < stream.length;) { const n = rint(12, 20); ingestBytes(stream.subarray(i, i + n)); i += n; }
+  },
+};
+
+/* =====================================================================
+   5. GPS
+   ===================================================================== */
+const gps = { real: null, sim: null, watchId: null, error: null };
+
+function startGps() {
+  if (gps.watchId != null) return;
+  if (!navigator.geolocation || !policyAllows('geolocation')) { gps.error = 'unsupported'; return; }
+  gps.watchId = navigator.geolocation.watchPosition(onPosition, err => {
+    gps.error = err.code === 1 ? 'denied' : 'unavailable';
+    renderInfo();
+  }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+}
+
+function onPosition(pos) {
+  const c = pos.coords;
+  const fix = { lat: c.latitude, lon: c.longitude, acc: c.accuracy, ts: Date.now(), src: 'gps' };
+  let speed = c.speed;
+  const prev = gps.real;
+  if ((speed == null || Number.isNaN(speed)) && prev) {         // derive speed if the device doesn't report it
+    const dt = (fix.ts - prev.ts) / 1000;
+    if (dt > 0.5) speed = distanceM(prev, fix) / dt;
+  }
+  fix.speed = speed ?? null;
+  // Heading: the device's when moving, else the direction between fixes, else keep the last one.
+  let heading = c.heading != null && !Number.isNaN(c.heading) && (fix.speed ?? 0) > 0.8 ? c.heading : null;
+  if (heading == null && prev && distanceM(prev, fix) > 5) heading = bearingDeg(prev, fix);
+  fix.heading = heading ?? prev?.heading ?? null;
+  gps.real = fix;
+  gps.error = null;
+  positionTick();
+}
+
+/** Current fix (simulated in Demo mode), or null if none / older than 15 s. */
+function currentGps() {
+  const g = Demo.active ? gps.sim : gps.real;
+  return g && Date.now() - g.ts < 15000 ? g : null;
+}
+
+function distanceM(a, b) {
+  const R = 6371000, r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+const toUnits = mps => mps * (settings.units === 'kmh' ? 3.6 : 2.23694);
+const unitLabel = () => (settings.units === 'kmh' ? 'km/h' : 'mph');
+
+/* =====================================================================
+   6. ALERT PIPELINE — filtering, lockouts, tracking, history
+   ===================================================================== */
+function cityActive() {
+  if (settings.cityMode === 'on') return true;
+  if (settings.cityMode === 'off') return false;
+  if (cityInfo()?.inside) return true;                          // inside city limits
+  const g = currentGps();
+  return !!(g && g.speed != null && toUnits(g.speed) < settings.citySpeed);
+}
+
+function autoMuteActive() {
+  if (!settings.autoMuteSpeed) return false;
+  const g = currentGps();
+  return !!(g && g.speed != null && toUnits(g.speed) < settings.autoMuteSpeed);
+}
+
+/** Lockout that matches this band/frequency at this position, if any. Laser is never locked out. */
+function findLockout(band, freq, pos) {
+  if (!pos || band === 'Laser') return null;
+  return lockouts.find(lo =>
+    lo.band === band &&
+    (lo.freq == null || freq == null || Math.abs(lo.freq - freq) <= settings.lockoutFreqTol) &&
+    distanceM(lo, pos) <= (lo.radius || settings.lockoutRadius)) || null;
+}
+
+/** Why an alert should be suppressed (string), or null to sound it. */
+function suppressionReason(a, pos, city) {
+  if (a.band === 'Laser') return null;
+  if (a.band === 'X' && settings.ignoreX === 'always') return 'X ignored';
+  if (a.band === 'X' && settings.ignoreX === 'city' && city) return 'City · X ignored';
+  if (a.band === 'K' && city && settings.cityKMinBars > 0 && a.bars < settings.cityKMinBars) return 'City · weak K';
+  const lo = findLockout(a.band, a.freq, pos);
+  if (lo) { a.lockoutId = lo.id; return 'Lockout'; }
+  return null;
+}
+
+const threatScore = a => BANDS[a.band].rank * 100 + (a.priority ? 50 : 0) + a.bars;
+const strengthCat = a => (a.band === 'Laser' || a.bars >= 7 ? 3 : a.bars >= 4 ? 2 : 1);
+
+/** Highest-threat alert that isn't suppressed — drives the big display and the beeps. */
+function leadAlert() {
+  let best = null;
+  for (const a of app.alerts) if (!a.suppressed && (!best || threatScore(a) > threatScore(best))) best = a;
+  return best;
+}
+
+function sameAlert(t, a) {
+  if (t.band !== a.band) return false;
+  if (a.band === 'Laser' || t.freq == null || a.freq == null) return true;
+  return Math.abs(t.freq - a.freq) <= 10;
+}
+
+/** Called with every complete alert table (from BLE or Demo). */
+function ingestAlertTable(raw) {
+  const now = Date.now();
+  const pos = currentGps();
+  const city = cityActive();
+
+  const alerts = raw.map(r => {
+    const a = { ...r };
+    a.suppressed = suppressionReason(a, pos, city);
+    return a;
+  });
+
+  // Match each alert to an ongoing encounter, or start a new one (→ history entry).
+  const used = new Set();
+  for (const a of alerts) {
+    let t = app.tracked.find(x => !used.has(x) && sameAlert(x, a));
+    if (!t) {
+      t = { id: app.nextTrackId++, band: a.band, freq: a.freq, lastSeen: now, announcedCat: 0, entry: null, lockoutCounted: false };
+      t.entry = {
+        id: `${now.toString(36)}-${t.id}`, t: now, band: a.band, freq: a.freq, bars: a.bars, dir: dirCode(a),
+        lat: pos ? +pos.lat.toFixed(6) : null, lon: pos ? +pos.lon.toFixed(6) : null,  // where it started
+        plat: pos ? +pos.lat.toFixed(6) : null, plon: pos ? +pos.lon.toFixed(6) : null, // where it peaked
+        spd: pos?.speed ?? null, sup: a.suppressed,
+      };
+      alertLog.unshift(t.entry);
+      if (alertLog.length > MAX_HISTORY) alertLog.length = MAX_HISTORY;
+      app.tracked.push(t);
+    }
+    used.add(t);
+    a.trackId = t.id;
+    t.lastSeen = now;
+    if (a.freq != null) t.freq = a.freq;
+    // Once an encounter hits a lockout, keep it quiet until it ends (no re-alert when leaving the radius).
+    if (a.suppressed === 'Lockout') t.lockoutId = a.lockoutId;
+    else if (!a.suppressed && t.lockoutId && lockouts.some(l => l.id === t.lockoutId)) { a.suppressed = 'Lockout'; a.lockoutId = t.lockoutId; }
+    // Remember where the signal peaked — the best estimate of the source position, used for lockouts.
+    if (a.bars > t.entry.bars && pos) { t.entry.plat = +pos.lat.toFixed(6); t.entry.plon = +pos.lon.toFixed(6); }
+    if (a.bars > t.entry.bars) t.entry.bars = a.bars;
+    t.entry.dir = mergeDir(t.entry.dir, dirCode(a));
+    if (t.entry.freq == null && a.freq != null) t.entry.freq = a.freq;
+    if (!a.suppressed) t.entry.sup = null;
+    if (a.suppressed === 'Lockout' && !t.lockoutCounted) {
+      t.lockoutCounted = true;
+      const lo = lockouts.find(l => l.id === a.lockoutId);
+      if (lo) { lo.hits = (lo.hits || 0) + 1; saveLockouts(); }
+    }
+
+    // Announce new alerts, and escalate when strength moves up a category (weak → medium → strong).
+    if (!a.suppressed) {
+      const cat = strengthCat(a);
+      if (cat > t.announcedCat) { announce(a, t.announcedCat === 0); t.announcedCat = cat; }
+    }
+  }
+  expireTracked(now);
+
+  app.alerts = alerts;
+  if (alerts.some(a => !a.suppressed)) app.lastLiveAlertAt = now;
+  else if (app.muted && app.muteTiedToAlert && settings.muteResetOnClear && now - app.lastLiveAlertAt > 3000) setMuted(false);
+
+  markHistoryDirty();
+  scheduleRender();
+}
+
+/** Close encounters not seen for 2.5 s (the grace period covers blinking / momentary drop-outs). */
+function expireTracked(now = Date.now()) {
+  const before = app.tracked.length;
+  app.tracked = app.tracked.filter(t => now - t.lastSeen < 2500);
+  if (app.tracked.length !== before) saveHistory();
+}
+
+const dirCode = a => (a.front ? 'F' : '') + (a.side ? 'S' : '') + (a.rear ? 'R' : '');
+const mergeDir = (x, y) => ['F', 'S', 'R'].filter(c => x.includes(c) || y.includes(c)).join('');
+
+function saveHistory() { store.set('history', alertLog); }
+function saveLockouts() { store.set('lockouts', lockouts); }
+
+/** Create a false-alert lockout at a position for a band/frequency. */
+function addLockout({ band, freq, lat, lon }) {
+  if (band === 'Laser') { toast('Laser alerts can’t be locked out.'); return; }
+  if (lat == null || lon == null) { toast('No GPS position for this alert — can’t lock it out.'); return; }
+  const lo = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+               band, freq: freq ?? null, lat, lon, radius: settings.lockoutRadius, created: Date.now(), hits: 0 };
+  lockouts.push(lo);
+  saveLockouts();
+  renderLockouts(); markHistoryDirty();
+  toast(`${band}${freq ? ' ' + fmtFreq(freq) : ''} locked out within ${lo.radius} m`, {
+    label: 'Undo', fn: () => removeLockout(lo.id),
+  });
+}
+
+function removeLockout(id) {
+  lockouts = lockouts.filter(l => l.id !== id);
+  saveLockouts();
+  renderLockouts(); markHistoryDirty();
+}
+
+/** "False alert" button: lock out the alert currently on the big display at the current position. */
+function lockoutCurrent() {
+  const lead = leadAlert();
+  if (!lead) return;
+  const pos = currentGps();
+  addLockout({ band: lead.band, freq: lead.freq, lat: pos?.lat ?? null, lon: pos?.lon ?? null });
+}
+
+/* =====================================================================
+   7. AUDIO, VIBRATION & VOICE
+   ===================================================================== */
+const Sound = {
+  ctx: null, master: null,
+
+  /** Must run from a user gesture (Chrome autoplay policy). */
+  unlock() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!this.ctx) {
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.connect(this.ctx.destination);
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    this.setVolume();
+  },
+  setVolume() { if (this.master) this.master.gain.value = (settings.volume / 100) ** 1.5; },
+
+  tone(freq, dur, when = 0, type = 'square', vol = 0.22) {
+    const c = this.ctx;
+    if (!c || c.state !== 'running') return;
+    const t = c.currentTime + when;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  },
+
+  /** One "beep" for the band: Ka = double chirp, Laser = two-tone warble. */
+  bandBeep(a) {
+    const tones = BANDS[a.band].tones;
+    const len = a.band === 'Laser' ? 0.05 : 0.07;
+    tones.forEach((f, i) => this.tone(f, len, i * (len + 0.02), a.band === 'X' ? 'sine' : 'square'));
+  },
+
+  disconnectChime() { [880, 660, 440].forEach((f, i) => this.tone(f, 0.18, i * 0.2, 'sine', 0.3)); },
+};
+
+/** Beep period by strength: ~1.15 s at 1 bar down to ~0.16 s at 8 bars; laser is near-continuous. */
+function beepInterval(a) {
+  if (a.band === 'Laser') return 120;
+  return 1150 - (Math.max(1, a.bars) - 1) * (1150 - 160) / 7;
+}
+
+function audioMuted(a) {
+  if (a && a.band === 'Laser' && settings.laserOverride) return false;
+  return app.muted || autoMuteActive();
+}
+
+/** Beep scheduler — polls fast so the cadence reacts immediately when strength rises. */
+let nextBeepAt = 0;
+setInterval(() => {
+  const lead = leadAlert();
+  const now = performance.now();
+  if (!lead || audioMuted(lead)) { nextBeepAt = 0; return; }
+  const iv = beepInterval(lead);
+  if (now >= nextBeepAt) { Sound.bandBeep(lead); nextBeepAt = now + iv; }
+  else if (nextBeepAt - now > iv) nextBeepAt = now + iv;   // signal got stronger → speed up now
+}, 25);
+
+const VIBES = { Laser: [300, 80, 300, 80, 300], Ka: [220, 90, 220], Ku: [180], K: [160], X: [70] };
+let lastSpokenAt = 0;
+
+/** New alert or escalation: vibrate + spoken phrase such as "Ka band, front, strong". */
+function announce(a, isNew) {
+  if (settings.vibrate && navigator.vibrate) navigator.vibrate(VIBES[a.band] || [120]);
+  if (!settings.voice || !('speechSynthesis' in window) || audioMuted(a)) return;
+  const now = performance.now();
+  const urgent = a.band === 'Laser';
+  if (!isNew && !urgent && now - lastSpokenAt < 2500) return;     // throttle escalation chatter
+  const dirs = [a.front && 'front', a.side && 'side', a.rear && 'rear'].filter(Boolean);
+  const strength = ['', 'weak', 'medium', 'strong'][strengthCat(a)];
+  const text = urgent ? 'Laser! Laser!' : `${BANDS[a.band].word}${dirs.length ? ', ' + dirs.join(' and ') : ''}, ${strength}`;
+  if (urgent) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.15;
+  u.volume = Math.min(1, settings.volume / 100 + 0.2);
+  speechSynthesis.speak(u);
+  lastSpokenAt = now;
+}
+
+function setMuted(on) {
+  app.muted = on;
+  app.muteTiedToAlert = on && !!leadAlert();
+  if (on && 'speechSynthesis' in window) speechSynthesis.cancel();
+  renderControls(); renderInfo();
+}
+
+/* =====================================================================
+   8. UI RENDERING
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const el = {
+  display: $('display'), bandLabel: $('bandLabel'), freq: $('freq'), bogeys: $('bogeys'), stack: $('stack'),
+  bars: $('bars'),
+  arFront: $('arFront'), arSideL: $('arSideL'), arSideR: $('arSideR'), arRear: $('arRear'),
+  status: $('connStatus'), banner: $('compatBanner'), info: $('info'), idleHint: $('idleHint'),
+  muteBtn: $('muteBtn'), lockBtn: $('lockBtn'), connectBtn: $('connectBtn'), demoBtn: $('demoBtn'),
+  histList: $('histList'), histCount: $('histCount'), loList: $('loList'), loCount: $('loCount'),
+  toast: $('toast'), toastMsg: $('toastMsg'),
+  mapBox: $('mapBox'), mapPlane: $('mapPlane'), mapTiles: $('mapTiles'), mapOverlay: $('mapOverlay'),
+  cityChip: $('cityChip'), speedBubble: $('speedBubble'), speedVal: $('speedVal'),
+  limitSign: $('limitSign'), limitVal: $('limitVal'), mapMsg: $('mapMsg'), mapHaze: $('mapHaze'),
+  expandBtn: $('expandBtn'), mapAlert: $('mapAlert'), zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'),
+  recenterBtn: $('recenterBtn'),
+  cityNow: $('cityNow'), citySource: $('citySource'), citySearch: $('citySearch'), cityResults: $('cityResults'),
+  shell: $('shell'), tabbar: $('tabbar'),
+};
+
+// Bar meter: 8 bars of increasing height.
+for (let i = 0; i < 8; i++) {
+  const b = document.createElement('i');
+  b.style.height = `${22 + i * (78 / 7)}%`;
+  el.bars.appendChild(b);
+}
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtFreq = mhz => (mhz ? `${(mhz / 1000).toFixed(3)} GHz` : '');
+const fmtTime = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const rint = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; renderDisplay(); renderControls(); });
+}
+
+function renderDisplay() {
+  const lead = leadAlert();
+  const live = app.alerts.filter(a => !a.suppressed);
+  const filtered = app.alerts.length - live.length;
+  const linked = conn.state === 'connected' || conn.state === 'demo' || conn.state === 'nodata';
+  const cam = !lead ? Cams.ahead : null;          // radar alerts outrank camera warnings
+
+  el.display.dataset.band = lead ? lead.band : cam ? 'Cam' : 'none';
+  el.display.classList.toggle('alerting', !!(lead || cam));
+  el.bandLabel.classList.toggle('small', !lead && !cam);
+  el.bandLabel.classList.toggle('cam', !!cam);
+  if (cam) {
+    el.bandLabel.textContent = CAM_LABEL[cam.cam.kind];
+    el.freq.textContent = `${fmtDist(cam.dist)} ahead`;
+    el.bogeys.textContent = cam.cam.max ? `Limit ${fmtLimit(cam.cam)} ${unitLabel()}` : '';
+  } else {
+    el.bandLabel.textContent = lead ? (lead.band === 'Laser' ? 'LASER' : lead.band) : linked ? 'CLEAR' : 'STANDBY';
+    el.freq.textContent = lead ? (lead.freq ? fmtFreq(lead.freq) : lead.band === 'Laser' ? '' : 'freq —') : '';
+    el.bogeys.textContent = (live.length ? `${live.length} alert${live.length > 1 ? 's' : ''}` : '') +
+                            (filtered ? `${live.length ? ' · ' : ''}${filtered} filtered` : '');
+  }
+
+  // Bars + arrows (V1-style: arrows show every live alert's direction). A camera fills bars as it gets closer.
+  const n = lead ? lead.bars : cam ? Math.max(1, Math.ceil(8 * (1 - cam.dist / Cams.alertDist))) : 0;
+  [...el.bars.children].forEach((b, i) => b.classList.toggle('lit', i < n));
+  el.bars.setAttribute('aria-label', `Signal ${n} of 8`);
+  const any = k => live.some(a => a[k]);
+  el.arFront.classList.toggle('lit', any('front') || !!cam);
+  el.arSideL.classList.toggle('lit', any('side'));
+  el.arSideR.classList.toggle('lit', any('side'));
+  el.arRear.classList.toggle('lit', any('rear'));
+
+  // Expanded map hides the alert card, so a banner over the map carries the essentials.
+  const banner = MAP.expanded && (lead || cam);
+  el.mapAlert.hidden = !banner;
+  if (banner) {
+    el.mapAlert.style.setProperty('--c', `var(${lead ? BANDS[lead.band].css : '--cam'})`);
+    el.mapAlert.innerHTML = lead
+      ? `<b>${lead.band === 'Laser' ? 'LASER' : lead.band}</b>${lead.freq ? `<span>${fmtFreq(lead.freq)}</span>` : ''}` +
+        `<span>${arrowGlyphs(dirCode(lead))}</span><span class="mb">${'▮'.repeat(lead.bars)}${'▯'.repeat(8 - lead.bars)}</span>` +
+        (live.length > 1 ? `<span>+${live.length - 1} more</span>` : '')
+      : `<b>${CAM_LABEL[cam.cam.kind]}</b><span>${fmtDist(cam.dist)} ahead</span>` +
+        (cam.cam.max ? `<span>Limit ${fmtLimit(cam.cam)}</span>` : '');
+  }
+
+  // Alert stack (only when more than one alert, or anything filtered).
+  const showStack = app.alerts.length > 1 || filtered > 0;
+  el.stack.innerHTML = showStack ? app.alerts
+    .slice().sort((a, b) => threatScore(b) - threatScore(a))
+    .map(a => `<span class="achip${a.suppressed ? ' sup' : ''}"${a.suppressed ? '' : ` style="--c:var(${BANDS[a.band].css})"`} title="${esc(a.suppressed || '')}">` +
+              `${a.band}${a.freq ? ' ' + (a.freq / 1000).toFixed(3) : ''} ${arrowGlyphs(dirCode(a))} ${a.bars}` +
+              `${a.suppressed ? ' · ' + esc(a.suppressed) : ''}</span>`).join('') : '';
+}
+
+const arrowGlyphs = d => (d.includes('F') ? '▲' : '') + (d.includes('S') ? '◆' : '') + (d.includes('R') ? '▼' : '');
+
+const STATUS_TEXT = {
+  idle: 'V1 not connected', scanning: 'Scanning…', connecting: 'Connecting…', connected: 'V1 connected',
+  nodata: 'V1 · no data', reconnecting: 'Reconnecting…', demo: 'Test drive', error: 'Error',
+};
+
+function setConn(state, detail = '') {
+  conn.state = state;
+  el.status.dataset.state = state;
+  let text = STATUS_TEXT[state] || state;
+  if (state === 'connected' && conn.device?.name) text += ` · ${conn.device.name}`;
+  if (detail) text += ` (${detail})`;
+  el.status.querySelector('span').textContent = text;
+  el.status.title = text;
+  renderControls();
+  scheduleRender();
+}
+
+function renderControls() {
+  const busy = ['scanning', 'connecting', 'connected', 'nodata', 'reconnecting'].includes(conn.state);
+  // One header button: Connect / Disconnect / Stop test.
+  el.connectBtn.textContent = Demo.active ? 'Stop test' : busy ? 'Disconnect' : 'Connect';
+  el.connectBtn.classList.toggle('primary', !busy && !Demo.active);
+  el.connectBtn.classList.toggle('stop', Demo.active);
+  el.connectBtn.disabled = !Demo.active && !busy && !bleSupported();
+  el.demoBtn.textContent = Demo.active ? 'Stop' : 'Start';
+  el.idleHint.hidden = Demo.active || conn.state !== 'idle' && conn.state !== 'error';
+  el.muteBtn.classList.toggle('on', app.muted);
+  el.muteBtn.textContent = app.muted ? '🔇 Muted' : autoMuteActive() ? '🔈 Auto-muted' : '🔊 Mute';
+  el.lockBtn.disabled = !leadAlert() || leadAlert().band === 'Laser';
+  el.tabbar.classList.toggle('alerting', !!leadAlert());
+}
+
+/** One compact status line under the alert: GPS problems, city mode, mute, camera data. Only shows what matters. */
+function renderInfo() {
+  const g = currentGps();
+  const items = [];
+  if (g) {
+    if (g.src === 'sim') items.push('Simulated GPS');
+  } else if (gps.error === 'denied') {
+    items.push('<span class="bad">GPS blocked</span>');
+  } else if (gps.error === 'unsupported') {
+    items.push('<span class="bad">No GPS</span>');
+  } else if (gps.watchId != null) {
+    items.push('<span class="warn">Waiting for GPS</span>');
+  }
+  if (cityActive()) items.push('City mode');
+  if (app.muted) items.push('<span class="warn">Muted</span>');
+  else if (autoMuteActive()) items.push(`<span class="warn">Auto-muted below ${settings.autoMuteSpeed} ${unitLabel()}</span>`);
+  if (settings.cameraAlerts && Cams.status === 'error' && !Cams.list.length) items.push('<span class="warn">Camera data offline</span>');
+  el.info.innerHTML = items.map(s => `<span>${s}</span>`).join('');
+  renderControls();
+}
+
+/* ---------- Tabs ---------- */
+function showTab(name) {
+  for (const b of el.tabbar.querySelectorAll('[data-tab]')) {
+    const on = b.dataset.tab === name;
+    b.setAttribute('aria-selected', on);
+    $('view-' + b.dataset.tab).hidden = !on;
+  }
+  document.querySelector('.views').scrollTop = 0;
+  if (name === 'history') renderHistory();
+}
+el.tabbar.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-tab]');
+  if (b) showTab(b.dataset.tab);
+});
+
+/* ---------- History ---------- */
+let historyDirty = true, lastHistoryRender = 0;
+function markHistoryDirty() { historyDirty = true; }
+setInterval(() => {
+  if (!historyDirty || performance.now() - lastHistoryRender < 700) return;
+  historyDirty = false; lastHistoryRender = performance.now();
+  renderHistory();
+}, 250);
+
+function renderHistory() {
+  el.histCount.textContent = alertLog.length ? `(${alertLog.length})` : '';
+  if (!alertLog.length) { el.histList.innerHTML = '<li class="empty">No alerts recorded yet.</li>'; return; }
+  el.histList.innerHTML = alertLog.slice(0, 150).map(e => {
+    const lo = e.lat != null ? findLockout(e.band, e.freq, { lat: e.plat ?? e.lat, lon: e.plon ?? e.lon }) : null;
+    const loc = e.lat != null
+      ? `<a href="https://www.google.com/maps?q=${e.lat},${e.lon}" target="_blank" rel="noopener">${e.lat.toFixed(5)}, ${e.lon.toFixed(5)}</a>`
+      : 'no GPS';
+    const bars = '▮'.repeat(e.bars) + '▯'.repeat(8 - e.bars);
+    let act = '';
+    if (e.band !== 'Laser' && e.lat != null) {
+      act = lo ? `<button class="btn sm" data-unlock="${esc(lo.id)}">Unlock</button>`
+               : `<button class="btn sm" data-lock="${esc(e.id)}">False alert</button>`;
+    }
+    return `<li class="hrow" style="--c:var(${BANDS[e.band]?.css || '--x'})">
+      <span class="when">${fmtTime(e.t)}</span>
+      <span class="main"><span class="bandtag">${esc(e.band)}</span>
+        <span>${e.freq ? fmtFreq(e.freq) : '—'}</span>
+        <span class="mini-bars" title="max ${e.bars}/8">${bars}</span>
+        <span>${arrowGlyphs(e.dir || '')}</span></span>
+      <span class="act">${act}</span>
+      <span class="meta"><span>📍 ${loc}</span>${e.spd != null ? `<span>${Math.round(toUnits(e.spd))} ${unitLabel()}</span>` : ''}
+        ${lo ? '<span class="tag">locked out</span>' : e.sup ? `<span class="tag">${esc(e.sup)}</span>` : ''}</span>
+    </li>`;
+  }).join('');
+}
+
+el.histList.addEventListener('click', ev => {
+  const lockId = ev.target.closest('[data-lock]')?.dataset.lock;
+  const unlockId = ev.target.closest('[data-unlock]')?.dataset.unlock;
+  if (lockId) {
+    const e = alertLog.find(x => x.id === lockId);
+    if (e) addLockout({ band: e.band, freq: e.freq, lat: e.plat ?? e.lat, lon: e.plon ?? e.lon });
+  }
+  if (unlockId) { removeLockout(unlockId); toast('Lockout removed'); }
+});
+
+/* ---------- Lockouts ---------- */
+function renderLockouts() {
+  MAP.dirty = true;
+  el.loCount.textContent = lockouts.length ? `(${lockouts.length})` : '';
+  if (!lockouts.length) {
+    el.loList.innerHTML = '<li class="empty">No lockouts. Tap “False alert” during an alert (or in the history) to suppress it at that location.</li>';
+    return;
+  }
+  el.loList.innerHTML = lockouts.slice().reverse().map(lo => `
+    <li class="hrow" style="--c:var(${BANDS[lo.band]?.css || '--x'})">
+      <span class="when">${new Date(lo.created).toLocaleDateString()}</span>
+      <span class="main"><span class="bandtag">${esc(lo.band)}</span><span>${lo.freq ? fmtFreq(lo.freq) + ' ±' + settings.lockoutFreqTol + ' MHz' : 'any freq'}</span></span>
+      <span class="act"><button class="btn sm" data-del="${esc(lo.id)}">Remove</button></span>
+      <span class="meta"><span>📍 <a href="https://www.google.com/maps?q=${lo.lat},${lo.lon}" target="_blank" rel="noopener">${lo.lat.toFixed(5)}, ${lo.lon.toFixed(5)}</a></span>
+        <span>radius ${lo.radius} m</span><span>${lo.hits || 0} suppressed</span></span>
+    </li>`).join('');
+  renderInfo();
+}
+
+el.loList.addEventListener('click', ev => {
+  const id = ev.target.closest('[data-del]')?.dataset.del;
+  if (id) removeLockout(id);
+});
+
+/* =====================================================================
+   8b. US CITIES — every Census place (city, town, village, CDP)
+   ---------------------------------------------------------------------
+   Data comes from us-cities.js (window.US_CITIES), one line per place:
+   "ST|Name|lat|lon|radius_km". The radius approximates city limits from
+   the place's land area, which is enough to tell "in town" from "out".
+   ===================================================================== */
+const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+const Cities = {
+  rows: null,
+  detected: null,          // { city, inside } from the last GPS lookup
+  lastAt: 0, lastPos: null,
+
+  parseRow(line) {
+    if (!line) return null;
+    const [st, name, lat, lon, r] = line.split('|');
+    return { st, name, lat: +lat, lon: +lon, r: +r, raw: line, key: fold(name) };
+  },
+  load() {
+    if (!this.rows) this.rows = (window.US_CITIES || '').split('\n').filter(Boolean).map(l => this.parseRow(l));
+    return this.rows;
+  },
+
+  /** Prefix search; "springfield, il" narrows to a state. Bigger places rank first. */
+  search(query, limit = 10) {
+    let q = fold(query.trim());
+    if (!q) return [];
+    let st = null;
+    const m = q.match(/^(.*?),\s*([a-z]{2})$/);
+    if (m) { q = m[1].trim(); st = m[2].toUpperCase(); }
+    q = q.replace(/,\s*$/, '');
+    const hits = [];
+    for (const c of this.load()) {
+      if (st && c.st !== st) continue;
+      const score = c.key.startsWith(q) ? 2 : c.key.includes(' ' + q) ? 1 : 0;
+      if (score) hits.push([score, c]);
+    }
+    hits.sort((a, b) => b[0] - a[0] || b[1].r - a[1].r);
+    return hits.slice(0, limit).map(h => h[1]);
+  },
+
+  /** The place whose limits contain this position (smallest relative distance), else the nearest one. */
+  locate(pos) {
+    let inside = null, near = null;
+    const kx = Math.cos(pos.lat * Math.PI / 180);
+    for (const c of this.load()) {
+      const dLat = c.lat - pos.lat;
+      if (dLat > 0.6 || dLat < -0.6) continue;
+      const d = Math.hypot(dLat * 111.32, (c.lon - pos.lon) * 111.32 * kx);   // km, fine at city scale
+      const ratio = d / (c.r * 1.15);
+      if (ratio <= 1 && (!inside || ratio < inside.ratio)) inside = { city: c, ratio };
+      if (!near || d < near.d) near = { city: c, d };
+    }
+    if (inside) return { city: inside.city, inside: true };
+    return near && near.d < 30 ? { city: near.city, inside: false } : null;
+  },
+
+  /** Re-detect the current city when we've moved 250 m or every 30 s. */
+  track(pos) {
+    if (!settings.cityFromGps) return;
+    const now = Date.now();
+    if (this.lastPos && distanceM(this.lastPos, pos) < 250 && now - this.lastAt < 30000) return;
+    this.lastPos = { lat: pos.lat, lon: pos.lon };
+    this.lastAt = now;
+    const before = this.detected?.city.raw + this.detected?.inside;
+    this.detected = this.locate(pos);
+    if (before !== this.detected?.city.raw + this.detected?.inside) { renderCity(); scheduleRender(); }
+  },
+};
+
+/** Where you are: the GPS-detected city, else the one you chose. */
+function cityInfo() {
+  if (settings.cityFromGps && Cities.detected) return { ...Cities.detected, source: 'gps' };
+  const c = Cities.parseRow(settings.homeCity);
+  if (!c) return null;
+  const g = currentGps();
+  return { city: c, inside: g ? distanceM(g, c) <= c.r * 1150 : true, source: 'chosen' };
+}
+
+function renderCity() {
+  const ci = cityInfo();
+  el.cityNow.textContent = ci ? `${ci.city.name}, ${ci.city.st}` : '—';
+  el.citySource.textContent = !ci ? 'Not set — search below'
+    : ci.source === 'gps' ? (ci.inside ? 'Detected from GPS' : 'Detected from GPS (outside city limits)')
+    : 'Chosen by you';
+  MAP.dirty = true;
+}
+
+function renderCityResults() {
+  const q = el.citySearch.value;
+  if (!q.trim()) { el.cityResults.innerHTML = ''; return; }
+  if (!Cities.load().length) {
+    el.cityResults.innerHTML = '<li class="empty">The city list didn’t load. Keep us-cities.js in the same folder as this page.</li>';
+    return;
+  }
+  const res = Cities.search(q);
+  el.cityResults._res = res;
+  el.cityResults.innerHTML = res.length
+    ? res.map((c, i) => `<li><button class="city-opt" data-i="${i}">${esc(c.name)}, ${c.st}</button></li>`).join('')
+    : '<li class="empty">No US city matches that. Try “Name, ST”.</li>';
+}
+
+function chooseCity(c) {
+  settings.homeCity = c.raw;
+  settings.cityFromGps = false;          // an explicit choice wins over detection
+  store.set('settings', settings);
+  reloadSettingInputs();
+  el.citySearch.value = '';
+  el.cityResults.innerHTML = '';
+  applySettings();
+  toast(`City set to ${c.name}, ${c.st}`);
+}
+
+el.citySearch.addEventListener('input', renderCityResults);
+el.cityResults.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-i]');
+  if (b) chooseCity(el.cityResults._res[+b.dataset.i]);
+});
+
+/* =====================================================================
+   8c. SPEED & RED-LIGHT CAMERAS — live from OpenStreetMap (Overpass API)
+   ---------------------------------------------------------------------
+   Cameras within 20 km are fetched when you start and again after you've
+   moved ~8 km. A camera is announced once when it is ahead of you (within
+   ±45° of your heading) and closer than ~25 s of driving (300–1000 m).
+   ===================================================================== */
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const CAM_LABEL = { speed: 'SPEED CAM', redlight: 'RED LIGHT CAM', average: 'AVG SPEED CAM' };
+const CAM_WORDS = { speed: 'Speed camera', redlight: 'Red light camera', average: 'Average speed camera' };
+
+const Cams = {
+  list: store.get('cameras', []),
+  fetchCenter: null, fetchedAt: 0, lastTry: 0, inFlight: false, status: 'idle',
+  ahead: null, alertDist: 500,
+  announced: new Set(),
+};
+
+function parseMaxspeed(v) {
+  const n = parseInt(v, 10);
+  if (!n) return {};
+  return { max: n, maxUnit: /mph/i.test(v) ? 'mph' : 'kmh' };
+}
+
+async function refreshCameras(pos) {
+  if (!settings.cameraAlerts || !pos || Cams.inFlight || !navigator.onLine) return;
+  const now = Date.now();
+  if (Cams.fetchCenter && distanceM(Cams.fetchCenter, pos) < 8000 && now - Cams.fetchedAt < 6 * 3600e3) return;
+  if (now - Cams.lastTry < 60000) return;
+  Cams.lastTry = now;
+  Cams.inFlight = true;
+  const at = `(around:20000,${pos.lat.toFixed(5)},${pos.lon.toFixed(5)})`;
+  const query = `[out:json][timeout:25];(node["highway"="speed_camera"]${at};` +
+    `relation["type"="enforcement"]["enforcement"~"^(maxspeed|traffic_signals|average_speed)$"]${at};);out center tags;`;
+  for (const url of OVERPASS) {
+    try {
+      const res = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query),
+                                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      mergeCameras(json.elements || [], pos);
+      Cams.fetchCenter = { lat: pos.lat, lon: pos.lon };
+      Cams.fetchedAt = now;
+      Cams.status = 'ok';
+      break;
+    } catch (e) {
+      console.warn('Camera lookup failed at', url, e);
+      Cams.status = 'error';
+    }
+  }
+  Cams.inFlight = false;
+  renderInfo();
+}
+
+function mergeCameras(elements, pos) {
+  const byId = new Map(Cams.list.map(c => [c.id, c]));
+  for (const e of elements) {
+    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+    if (lat == null || lon == null) continue;
+    const t = e.tags || {};
+    const kind = e.type === 'node' ? 'speed'
+      : t.enforcement === 'traffic_signals' ? 'redlight' : t.enforcement === 'average_speed' ? 'average' : 'speed';
+    byId.set(e.type[0] + e.id, { id: e.type[0] + e.id, lat, lon, kind, ...parseMaxspeed(t.maxspeed || '') });
+  }
+  // Keep the 2,000 cameras nearest to where we are.
+  Cams.list = [...byId.values()]
+    .sort((a, b) => distanceM(a, pos) - distanceM(b, pos))
+    .slice(0, 2000);
+  store.set('cameras', Cams.list);
+  MAP.dirty = true;
+}
+
+function updateCameraAhead(pos) {
+  const prev = Cams.ahead?.cam.id;
+  Cams.ahead = null;
+  if (settings.cameraAlerts && pos && pos.speed != null && pos.speed > 2 && pos.heading != null) {
+    Cams.alertDist = Math.min(1000, Math.max(300, pos.speed * 25));
+    for (const c of Cams.list) {
+      if (Math.abs(c.lat - pos.lat) > 0.02 || Math.abs(c.lon - pos.lon) > 0.03) continue;
+      const d = distanceM(pos, c);
+      if (d > 1500) { Cams.announced.delete(c.id); continue; }
+      if (d > Cams.alertDist) continue;
+      if (Math.abs(angleDiff(bearingDeg(pos, c), pos.heading)) > 45 && d > 60) continue;   // behind or off to the side
+      if (!Cams.ahead || d < Cams.ahead.dist) Cams.ahead = { cam: c, dist: d };
+    }
+  }
+  if (Cams.ahead && !Cams.announced.has(Cams.ahead.cam.id)) {
+    Cams.announced.add(Cams.ahead.cam.id);
+    announceCamera(Cams.ahead);
+  }
+  if (prev !== Cams.ahead?.cam.id || Cams.ahead) scheduleRender();
+}
+
+const fmtDist = m => settings.units === 'kmh'
+  ? (m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`)
+  : (m < 305 ? `${Math.round(m * 3.281 / 50) * 50} ft` : `${(m / 1609.34).toFixed(1)} mi`);
+const speakDist = m => settings.units === 'kmh'
+  ? `${Math.round(m / 50) * 50} meters`
+  : (m < 305 ? `${Math.round(m * 3.281 / 100) * 100} feet` : `${(m / 1609.34).toFixed(1)} miles`);
+
+function fmtLimit(cam) {
+  if (!cam.max) return '';
+  const want = settings.units;
+  if (cam.maxUnit === want) return String(cam.max);
+  return String(Math.round((want === 'mph' ? cam.max / 1.609 : cam.max * 1.609) / 5) * 5);
+}
+
+function announceCamera({ cam, dist }) {
+  if (settings.vibrate && navigator.vibrate) navigator.vibrate([90, 60, 90]);
+  if (audioMuted(null)) return;
+  Sound.tone(880, 0.16, 0, 'sine', 0.3);
+  Sound.tone(1320, 0.24, 0.18, 'sine', 0.3);
+  if (settings.voice && 'speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance(`${CAM_WORDS[cam.kind]} ahead, ${speakDist(dist)}`);
+    u.rate = 1.1;
+    speechSynthesis.speak(u);
+  }
+}
+
+/** Runs on every GPS fix and once a second: city detection, camera data, camera warnings. */
+function positionTick() {
+  const g = currentGps();
+  if (g) { Cities.track(g); refreshCameras(g); }
+  updateCameraAhead(g);
+}
+
+/* =====================================================================
+   8d. DRIVING MAP — heading-up, tilted street map like a car navigation view
+   ---------------------------------------------------------------------
+   Street tiles (© OpenStreetMap contributors) are drawn
+   into a large canvas, the "plane", which CSS tilts back in 3D so roads
+   recede toward the horizon. Things that should stand upright — your car
+   and camera pins — go on a flat overlay canvas, positioned by
+   worldToScreen() with the same perspective maths CSS uses.
+   ===================================================================== */
+const TAU = Math.PI * 2;
+const TILE = 256;
+const bandColors = {};
+function readBandColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const [band, meta] of Object.entries(BANDS)) bandColors[band] = cs.getPropertyValue(meta.css).trim();
+}
+function rgba(hex, a) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
+const angleDiff = (a, b) => ((a - b + 540) % 360) - 180;
+function bearingDeg(a, b) {
+  const r = Math.PI / 180;
+  const y = Math.sin((b.lon - a.lon) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lon - a.lon) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+
+const MAP = {
+  TILT: 50 * Math.PI / 180, // driving view tilt; bird's-eye view is flat (0)
+  ANCHOR: 0.74,             // the car sits 74% of the way down the map
+  view: { has: false, lat: 0, lon: 0, heading: 0, zoom: 16.6, src: null },
+  tilt: 50 * Math.PI / 180, // current tilt (eases between driving and bird's-eye)
+  free: false,              // true while you're browsing the map by touch (bird's-eye)
+  zoomBias: 0,              // +/− buttons while following: added to the speed-based zoom
+  lastTouch: 0,
+  expanded: !!store.get('mapExpanded', false),
+  tiles: new Map(),         // LRU cache of tile images
+  geom: null, dirty: true, lastFrame: 0, lastUi: 0,
+  loads: 0, failures: 0,
+};
+const mapCtx = el.mapTiles.getContext('2d');
+const overCtx = el.mapOverlay.getContext('2d');
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const MIN_ZOOM = 4, MAX_ZOOM = 19.4;
+
+function mapStyle() {
+  if (settings.mapStyle === 'day' || settings.mapStyle === 'night') return settings.mapStyle;
+  const h = new Date().getHours();
+  return h >= 7 && h < 19 ? 'day' : 'night';
+}
+
+/** Web Mercator: lat/lon → world pixels at zoom z, and back. */
+function worldPx(lat, lon, z) {
+  const s = TILE * 2 ** z;
+  const sin = Math.sin(lat * Math.PI / 180);
+  return { x: (lon + 180) / 360 * s, y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * s };
+}
+function worldToLatLon(x, y, z) {
+  const s = TILE * 2 ** z;
+  return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * y / s))) * 180 / Math.PI, lon: x / s * 360 - 180 };
+}
+
+/** Size the plane for the full driving tilt (it then also covers every flatter angle). */
+function layoutMap() {
+  const W = el.mapBox.clientWidth, H = el.mapBox.clientHeight;
+  if (!W || !H) return;
+  const T = MAP.TILT, P = Math.max(420, H * 1.5);
+  const ax = W / 2, ay = H * MAP.ANCHOR;
+  const up = ay - H * 0.06;                                      // plane reaches 6% from the top (under the haze)
+  const above = Math.min(H * 4, up * P / Math.max(1, P * Math.cos(T) - up * Math.sin(T)));
+  const down = H - ay;
+  const below = down * P / (P * Math.cos(T) + down * Math.sin(T)) + 24;
+  const sFar = P / (P + above * Math.sin(T));
+  const PW = Math.ceil(W / sFar + 48), PH = Math.ceil(Math.max(above + below, ay + down + 24));
+  const pax = PW / 2, pay = above;
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+  const odpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  Object.assign(el.mapPlane.style, {
+    width: PW + 'px', height: PH + 'px', left: (ax - pax) + 'px', top: (ay - pay) + 'px',
+    transformOrigin: `${pax}px ${pay}px`,
+  });
+  el.mapTiles.width = Math.round(PW * dpr); el.mapTiles.height = Math.round(PH * dpr);
+  el.mapOverlay.width = Math.round(W * odpr); el.mapOverlay.height = Math.round(H * odpr);
+  MAP.geom = { W, H, P, ax, ay, PW, PH, pax, pay, dpr, odpr };
+  applyTilt();
+  MAP.dirty = true;
+}
+
+function applyTilt() {
+  if (!MAP.geom) return;
+  el.mapPlane.style.transform = `perspective(${MAP.geom.P}px) rotateX(${MAP.tilt}rad)`;
+  el.mapHaze.style.opacity = (MAP.tilt / MAP.TILT).toFixed(2);
+}
+
+/** Zoom out as speed rises, like a navigation app (≈ street level in town, wider on the highway). */
+function zoomForSpeed(mps) {
+  if (mps == null) return 16.6;
+  return 17.4 - Math.min(1, Math.max(0, (mps * 2.237 - 20) / 50)) * 1.8;
+}
+
+/** Latest GPS position, dead-reckoned between 1 Hz fixes so the car glides. */
+function carFix() {
+  const g = currentGps();
+  if (!g) return null;
+  let { lat, lon } = g;
+  if (g.speed > 1 && g.heading != null) {
+    const d = g.speed * Math.min(1.5, (Date.now() - g.ts) / 1000);
+    lat += d * Math.cos(g.heading * Math.PI / 180) / 111320;
+    lon += d * Math.sin(g.heading * Math.PI / 180) / (111320 * Math.cos(lat * Math.PI / 180));
+  }
+  return { lat, lon, heading: g.heading, speed: g.speed };
+}
+
+/** Follow mode: ease the camera toward your car (or chosen city). Bird's-eye: leave it where you put it. */
+function updateMapView(dt) {
+  const v = MAP.view, now = performance.now();
+
+  const tiltTarget = MAP.free ? 0 : MAP.TILT;
+  if (MAP.tilt !== tiltTarget) {
+    MAP.tilt += (tiltTarget - MAP.tilt) * (1 - Math.exp(-dt * 10));
+    if (Math.abs(MAP.tilt - tiltTarget) < 0.003) MAP.tilt = tiltTarget;
+    applyTilt();
+    MAP.dirty = true;
+  }
+
+  const car = carFix();
+  // Driving again after 20 s without touching the map: go back to following the car.
+  if (MAP.free && car && car.speed > 4 && now - MAP.lastTouch > 20000) recenter();
+
+  if (MAP.free) {
+    if (v.heading !== 0) {                                        // bird's-eye is north-up
+      v.heading = (v.heading + angleDiff(0, v.heading) * (1 - Math.exp(-dt * 8)) + 360) % 360;
+      if (Math.abs(angleDiff(0, v.heading)) < 0.05) v.heading = 0;
+      MAP.dirty = true;
+    }
+    if (car) MAP.dirty = true;                                    // your car keeps moving across the map
+    return;
+  }
+
+  let t = null;
+  if (car) {
+    t = { lat: car.lat, lon: car.lon, heading: car.heading ?? v.heading, zoom: zoomForSpeed(car.speed), src: 'gps' };
+  } else {
+    const ci = cityInfo();
+    if (ci) t = { lat: ci.city.lat, lon: ci.city.lon, heading: 0,
+                  zoom: Math.max(11, Math.min(15, 15.2 - Math.log2(ci.city.r))), src: 'city' };
+  }
+  if (!t) { if (v.has) MAP.dirty = true; v.has = false; v.src = null; return; }
+  t.zoom = clamp(t.zoom + MAP.zoomBias, MIN_ZOOM, MAX_ZOOM);
+  if (!v.has || v.src !== t.src || Math.abs(t.lat - v.lat) + Math.abs(t.lon - v.lon) > 0.02) {
+    Object.assign(v, t, { has: true });
+    MAP.dirty = true;
+    return;
+  }
+  const before = v.lat + v.lon + v.heading + v.zoom;
+  const a = 1 - Math.exp(-dt * 6);
+  v.lat += (t.lat - v.lat) * a;
+  v.lon += (t.lon - v.lon) * a;
+  v.heading = (v.heading + angleDiff(t.heading, v.heading) * (1 - Math.exp(-dt * 3)) + 360) % 360;
+  v.zoom += (t.zoom - v.zoom) * (1 - Math.exp(-dt * 2));
+  if (Math.abs(v.lat + v.lon + v.heading + v.zoom - before) > 1e-7) MAP.dirty = true;
+}
+
+/** OpenStreetMap's standard tiles (no API key; light personal use per the OSM tile policy). */
+const tileUrl = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+
+function getTile(z, x, y, load) {
+  const key = `${z}/${x}/${y}`;
+  let t = MAP.tiles.get(key);
+  if (t) { MAP.tiles.delete(key); MAP.tiles.set(key, t); }          // mark recently used
+  else if (load) {
+    t = { img: new Image(), ok: false };
+    t.img.onload = () => { t.ok = true; MAP.loads++; MAP.dirty = true; };
+    t.img.onerror = () => { MAP.failures++; setTimeout(() => MAP.tiles.delete(key), 20000); };
+    t.img.src = tileUrl(z, x, y);
+    MAP.tiles.set(key, t);
+    if (MAP.tiles.size > 400) MAP.tiles.delete(MAP.tiles.keys().next().value);
+  }
+  return t && t.ok ? t : null;
+}
+
+/** The current camera as numbers: integer tile zoom, scale, centre in world px, rotation. */
+function frameOf(v) {
+  const zi = clamp(Math.floor(v.zoom), 3, 19);
+  const h = v.heading * Math.PI / 180;
+  return { zi, k: 2 ** (v.zoom - zi), car: worldPx(v.lat, v.lon, zi), h, cos: Math.cos(h), sin: Math.sin(h) };
+}
+
+/** Plane point (relative to the anchor) → screen, using the same perspective maths as the CSS tilt. */
+function planeToScreen(rx, ry) {
+  const G = MAP.geom, T = MAP.tilt;
+  const z = ry * Math.sin(T);                                              // rotateX: points ahead recede
+  if (G.P - z <= 1) return null;
+  const s = G.P / (G.P - z);
+  return { x: G.ax + rx * s, y: G.ay + ry * Math.cos(T) * s, scale: s };
+}
+
+/** World px → plane point relative to the anchor (rotated so your heading points up). */
+function worldToPlane(p, f) {
+  const dx = (p.x - f.car.x) * f.k, dy = (p.y - f.car.y) * f.k;
+  return { x: dx * f.cos + dy * f.sin, y: -dx * f.sin + dy * f.cos };
+}
+
+function worldToScreen(lat, lon, f) {
+  const r = worldToPlane(worldPx(lat, lon, f.zi), f);
+  return planeToScreen(r.x, r.y);
+}
+
+/** Screen point → world px (inverse of the tilt + rotation), or null above the horizon. */
+function screenToWorld(sx, sy, f) {
+  const G = MAP.geom, T = MAP.tilt, P = G.P;
+  const Y = sy - G.ay;
+  const den = P * Math.cos(T) + Y * Math.sin(T);
+  if (den <= 1) return null;
+  const ry = Y * P / den;
+  const rx = (sx - G.ax) * (P - ry * Math.sin(T)) / P;
+  const dx = rx / f.k, dy = ry / f.k;
+  return { x: f.car.x + dx * f.cos - dy * f.sin, y: f.car.y + dx * f.sin + dy * f.cos };
+}
+
+function drawMap(now) {
+  const G = MAP.geom, v = MAP.view, c = mapCtx, o = overCtx;
+  const night = mapStyle() === 'night';
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.fillStyle = night ? '#10161d' : '#ebe8e1';
+  c.fillRect(0, 0, el.mapTiles.width, el.mapTiles.height);
+  o.setTransform(G.odpr, 0, 0, G.odpr, 0, 0);
+  o.clearRect(0, 0, G.W, G.H);
+  if (!v.has) return;
+
+  const f = frameOf(v), { zi, k, car, h } = f;
+  const toWorld = () => {
+    c.setTransform(G.dpr, 0, 0, G.dpr, 0, 0);
+    c.translate(G.pax, G.pay); c.rotate(-h); c.scale(k, k); c.translate(-car.x, -car.y);
+  };
+
+  // --- Street tiles covering the plane (its corners mapped back into world pixels) ---
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [px, py] of [[0, 0], [G.PW, 0], [0, G.PH], [G.PW, G.PH]]) {
+    const dx = (px - G.pax) / k, dy = (py - G.pay) / k;
+    const wx = car.x + dx * f.cos - dy * f.sin, wy = car.y + dx * f.sin + dy * f.cos;
+    minX = Math.min(minX, wx); maxX = Math.max(maxX, wx); minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
+  }
+  toWorld();
+  // Night: invert the light OSM tiles into a dark map (hue-rotate keeps water blue, parks green).
+  c.filter = night ? 'invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.55)' : 'saturate(0.85)';
+  const n = 2 ** zi;
+  const y0 = Math.max(0, Math.floor(minY / TILE)), y1 = Math.min(n - 1, Math.floor(maxY / TILE));
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = Math.floor(minX / TILE); tx <= Math.floor(maxX / TILE); tx++) {
+      const wx = ((tx % n) + n) % n;
+      const t = getTile(zi, wx, ty, true);
+      if (t) { c.drawImage(t.img, tx * TILE, ty * TILE, TILE + 0.6, TILE + 0.6); continue; }
+      const p = getTile(zi - 1, wx >> 1, ty >> 1, false);                 // blurry parent while loading
+      if (p) {
+        const s = p.img.naturalWidth / 2;
+        c.drawImage(p.img, (wx & 1) * s, (ty & 1) * s, s, s, tx * TILE, ty * TILE, TILE + 0.6, TILE + 0.6);
+      }
+    }
+  }
+  c.filter = 'none';
+
+  // How far around the view centre to look for lockouts / cameras (grows as you zoom out).
+  const span = Math.max(0.05, 600 / 2 ** v.zoom);
+
+  // --- Lockout zones, flat on the road ---
+  toWorld();
+  const mpp = 156543.03392 * Math.cos(v.lat * Math.PI / 180) / n;           // metres per world pixel
+  for (const lo of lockouts) {
+    if (Math.abs(lo.lat - v.lat) > span || Math.abs(lo.lon - v.lon) > span * 1.4) continue;
+    const p = worldPx(lo.lat, lo.lon, zi);
+    c.beginPath(); c.arc(p.x, p.y, Math.max((lo.radius || settings.lockoutRadius) / mpp, 3 / k), 0, TAU);
+    c.fillStyle = 'rgba(150,165,178,.16)'; c.fill();
+    c.setLineDash([8 / k, 6 / k]); c.lineWidth = 2 / k; c.strokeStyle = 'rgba(170,185,198,.75)'; c.stroke();
+    c.setLineDash([]);
+  }
+
+  // Where your car is on the plane: the anchor while following, anywhere while browsing.
+  const fix = carFix();
+  let carPlane = null, carRot = 0;
+  if (fix) {
+    carPlane = MAP.free ? worldToPlane(worldPx(fix.lat, fix.lon, zi), f) : { x: 0, y: 0 };
+    carRot = ((fix.heading ?? v.heading) - v.heading) * Math.PI / 180;
+  }
+
+  // --- V1 alerts: a glow on the road around your car, in the direction the detector reports ---
+  const gp = carPlane || { x: 0, y: 0 };
+  c.setTransform(G.dpr, 0, 0, G.dpr, (G.pax + gp.x) * G.dpr, (G.pay + gp.y) * G.dpr);
+  c.rotate(carRot);
+  for (const a of app.alerts) {
+    if (a.suppressed) continue;
+    const col = bandColors[a.band] || '#9aa5ae';
+    const pulse = 0.6 + 0.4 * Math.sin(now / (a.band === 'Laser' ? 60 : 420 - a.bars * 35));
+    const len = 70 + a.bars * 28;
+    const beams = [];
+    if (a.front) beams.push([-Math.PI / 2, 0.55]);
+    if (a.rear) beams.push([Math.PI / 2, 0.55]);
+    if (a.side) beams.push([0, 0.45], [Math.PI, 0.45]);
+    if (a.band === 'Laser' || !beams.length) beams.push([0, Math.PI]);       // full ring
+    for (const [ang, half] of beams) {
+      const g = c.createRadialGradient(0, 0, 12, 0, 0, len);
+      g.addColorStop(0, rgba(col, 0.75 * pulse));
+      g.addColorStop(1, rgba(col, 0));
+      c.fillStyle = g;
+      c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, len, ang - half, ang + half); c.closePath(); c.fill();
+    }
+  }
+
+  // --- Upright overlay: camera pins and your car ---
+  const hazeY = G.H * 0.1 * (MAP.tilt / MAP.TILT);
+  let pins = 0;
+  for (const cam of Cams.list) {
+    if (pins > 300) break;
+    if (Math.abs(cam.lat - v.lat) > span || Math.abs(cam.lon - v.lon) > span * 1.4) continue;
+    const s = worldToScreen(cam.lat, cam.lon, f);
+    if (!s || s.y < hazeY || s.y > G.H + 30 || s.x < -30 || s.x > G.W + 30) continue;
+    const size = v.zoom < 12 ? 0.6 : Math.max(0.55, Math.min(1.15, s.scale));
+    drawCamPin(o, s.x, s.y, size, cam, cam === Cams.ahead?.cam, now);
+    pins++;
+  }
+  if (carPlane) {
+    const s = planeToScreen(carPlane.x, carPlane.y);
+    if (s) drawCar(o, s.x, s.y, carRot, fix.heading != null);
+  }
+}
+
+function drawCar(o, x, y, rot, hasHeading) {
+  o.save();
+  o.translate(x, y);
+  if (hasHeading) {                                   // navigation arrow, lying slightly flat on the road
+    o.scale(1, 0.82 + 0.18 * (1 - MAP.tilt / MAP.TILT));
+    o.rotate(rot);
+    o.shadowColor = 'rgba(0,0,0,.45)'; o.shadowBlur = 10; o.shadowOffsetY = 3;
+    o.beginPath(); o.moveTo(0, -21); o.lineTo(15, 14); o.lineTo(0, 6); o.lineTo(-15, 14); o.closePath();
+    o.fillStyle = '#1a73e8'; o.fill();
+    o.shadowColor = 'transparent';
+    o.lineJoin = 'round'; o.lineWidth = 3; o.strokeStyle = '#fff'; o.stroke();
+  } else {                                            // parked: location dot with a halo
+    o.fillStyle = 'rgba(26,115,232,.2)'; o.beginPath(); o.arc(0, 0, 26, 0, TAU); o.fill();
+    o.fillStyle = '#fff'; o.beginPath(); o.arc(0, 0, 10, 0, TAU); o.fill();
+    o.fillStyle = '#1a73e8'; o.beginPath(); o.arc(0, 0, 7.5, 0, TAU); o.fill();
+  }
+  o.restore();
+}
+
+function drawCamPin(o, x, y, s, cam, active, now) {
+  const col = cam.kind === 'redlight' ? '#e8453c' : cam.kind === 'average' ? '#9c6ade' : '#1a73e8';
+  o.save();
+  o.translate(x, y);
+  o.scale(s, s);
+  o.fillStyle = 'rgba(0,0,0,.3)';
+  o.beginPath(); o.ellipse(0, 0, 6, 2.2, 0, 0, TAU); o.fill();
+  o.fillStyle = col;
+  o.beginPath(); o.moveTo(0, 0); o.lineTo(-6, -12); o.lineTo(6, -12); o.closePath(); o.fill();
+  o.beginPath(); o.arc(0, -22, 13, 0, TAU); o.fill();
+  o.lineWidth = 2.5; o.strokeStyle = '#fff'; o.stroke();
+  o.fillStyle = '#fff';
+  if (cam.kind === 'redlight') {                      // traffic light
+    for (let i = -1; i <= 1; i++) { o.beginPath(); o.arc(0, -22 + i * 5.5, 2.3, 0, TAU); o.fill(); }
+  } else {                                            // camera body + lens
+    o.fillRect(-7.5, -26.5, 11, 9);
+    o.beginPath(); o.moveTo(3.5, -24); o.lineTo(8, -27); o.lineTo(8, -17); o.lineTo(3.5, -20); o.closePath(); o.fill();
+  }
+  if (active) {                                       // pulse on the camera you're approaching
+    const t = (now % 1200) / 1200;
+    o.globalAlpha = 1 - t; o.lineWidth = 3; o.strokeStyle = col;
+    o.beginPath(); o.arc(0, -22, 13 + t * 16, 0, TAU); o.stroke();
+  }
+  o.restore();
+}
+
+/** HTML parts of the map: city chip, speed bubble, speed-limit sign, buttons, status message. ~4×/s. */
+function renderMapUi() {
+  const g = currentGps(), v = MAP.view;
+  const night = mapStyle() === 'night';
+  el.mapBox.classList.toggle('night', night);
+  el.mapBox.classList.toggle('day', !night);
+
+  const ci = cityInfo();
+  el.cityChip.innerHTML = ci
+    ? `${ci.inside ? '' : 'Near '}${esc(ci.city.name)}, ${ci.city.st}${cityActive() ? ' <span class="cm">· City mode</span>' : ''}`
+    : 'Set your city';
+
+  el.speedBubble.hidden = !g;
+  if (g) el.speedVal.textContent = g.speed != null ? Math.round(toUnits(g.speed)) : '–';
+
+  const lim = Cams.ahead && fmtLimit(Cams.ahead.cam);
+  el.limitSign.hidden = !lim;
+  if (lim) el.limitVal.textContent = lim;
+
+  el.recenterBtn.hidden = !(MAP.free || MAP.zoomBias !== 0) || !v.has;
+
+  let msg = '';
+  if (!v.has) {
+    msg = gps.error === 'denied' ? 'Location is blocked. Allow location for this site, or choose your city in Settings.'
+        : gps.error === 'unsupported' ? 'No GPS here. Choose your city in Settings to see the map.'
+        : 'Finding your location…';
+  } else if (!MAP.loads && MAP.failures > 3) {
+    msg = 'The street map can’t load (no internet?). Radar alerts still work.';
+  }
+  el.mapMsg.hidden = !msg;
+  el.mapMsg.textContent = msg;
+}
+
+function mapLoop(now) {
+  requestAnimationFrame(mapLoop);
+  if (document.hidden || !MAP.geom || $('view-drive').hidden) return;
+  if (now - MAP.lastFrame < 33) return;                                   // ~30 fps is plenty
+  const dt = Math.min(0.25, (now - MAP.lastFrame) / 1000);
+  MAP.lastFrame = now;
+  updateMapView(dt);
+  if (now - MAP.lastUi > 250) { MAP.lastUi = now; renderMapUi(); }
+  const animating = app.alerts.some(a => !a.suppressed) || !!Cams.ahead;
+  if (!MAP.dirty && !animating) return;
+  MAP.dirty = false;
+  drawMap(now);
+}
+
+/* ---------- Map touch: drag to move, pinch / double-tap / wheel to zoom, bird's-eye view ---------- */
+
+/** Move and zoom so the map point under screen point `from` ends up under `to`, zoom changed by dz. */
+function panZoom(from, to, dz) {
+  const v = MAP.view;
+  if (!v.has || !MAP.geom) return;
+  const f0 = frameOf(v);
+  const w0 = screenToWorld(from.x, from.y, f0);
+  if (!w0) return;
+  const grab = worldToLatLon(w0.x, w0.y, f0.zi);
+  v.zoom = clamp(v.zoom + dz, MIN_ZOOM, MAX_ZOOM);
+  const f1 = frameOf(v);
+  const w1 = screenToWorld(to.x, to.y, f1);
+  if (!w1) return;
+  const g1 = worldPx(grab.lat, grab.lon, f1.zi);
+  const c = worldToLatLon(f1.car.x + g1.x - w1.x, f1.car.y + g1.y - w1.y, f1.zi);
+  v.lat = clamp(c.lat, -85, 85);
+  v.lon = ((c.lon + 540) % 360) - 180;
+  MAP.dirty = true;
+}
+
+/** Touching the map switches to the flat, north-up bird's-eye view until you tap Re-center. */
+function enterFree() {
+  MAP.lastTouch = performance.now();
+  if (!MAP.free) { MAP.free = true; renderMapUi(); }
+}
+
+function recenter() {
+  MAP.free = false;
+  MAP.zoomBias = 0;
+  MAP.dirty = true;
+  renderMapUi();
+}
+
+/** + / − buttons: zoom the bird's-eye view, or while following, zoom the follow view. */
+function zoomStep(dz) {
+  if (MAP.free) {
+    MAP.lastTouch = performance.now();
+    const mid = { x: MAP.geom.W / 2, y: MAP.geom.H / 2 };
+    panZoom(mid, mid, dz);
+  } else {
+    MAP.zoomBias = clamp(MAP.zoomBias + dz, -12, 2);
+    MAP.dirty = true;
+  }
+  renderMapUi();
+}
+
+function setExpanded(on) {
+  MAP.expanded = on;
+  el.shell.classList.toggle('map-expanded', on);
+  el.expandBtn.setAttribute('aria-label', on ? 'Shrink map' : 'Expand map');
+  el.expandBtn.querySelector('.ic-expand').style.display = on ? 'none' : '';
+  el.expandBtn.querySelector('.ic-shrink').style.display = on ? '' : 'none';
+  store.set('mapExpanded', on);
+  scheduleRender();
+}
+
+const touch = { pointers: new Map(), last: null, moved: false, tap: { t: 0, x: 0, y: 0 } };
+
+function mapPoint(ev) {
+  const r = el.mapBox.getBoundingClientRect();
+  return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+}
+function touchState() {
+  const pts = [...touch.pointers.values()];
+  if (pts.length === 1) return { mid: pts[0], dist: 0 };
+  const [a, b] = pts;
+  return { mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dist: Math.hypot(a.x - b.x, a.y - b.y) };
+}
+
+el.mapBox.addEventListener('pointerdown', ev => {
+  if (ev.target.closest('button')) return;                     // buttons on the map handle their own taps
+  try { el.mapBox.setPointerCapture(ev.pointerId); } catch { /* keep going without capture */ }
+  touch.pointers.set(ev.pointerId, mapPoint(ev));
+  touch.last = touchState();
+  touch.moved = touch.pointers.size > 1;
+});
+
+el.mapBox.addEventListener('pointermove', ev => {
+  if (!touch.pointers.has(ev.pointerId)) return;
+  touch.pointers.set(ev.pointerId, mapPoint(ev));
+  const now = touchState();
+  if (!touch.moved && Math.hypot(now.mid.x - touch.last.mid.x, now.mid.y - touch.last.mid.y) < 6) return;  // still a tap
+  touch.moved = true;
+  enterFree();
+  const dz = now.dist > 0 && touch.last.dist > 0 ? Math.log2(now.dist / touch.last.dist) : 0;
+  panZoom(touch.last.mid, now.mid, dz);
+  touch.last = now;
+});
+
+function endTouch(ev) {
+  const p = touch.pointers.get(ev.pointerId);
+  if (!p) return;
+  touch.pointers.delete(ev.pointerId);
+  if (ev.type === 'pointerup' && !touch.moved && touch.pointers.size === 0) {
+    const t = performance.now();                                // double-tap: zoom in where you tapped
+    if (t - touch.tap.t < 320 && Math.hypot(p.x - touch.tap.x, p.y - touch.tap.y) < 30) {
+      enterFree();
+      panZoom(p, p, 1);
+      touch.tap.t = 0;
+    } else {
+      touch.tap = { t, x: p.x, y: p.y };
+    }
+  }
+  touch.last = touch.pointers.size ? touchState() : null;
+}
+el.mapBox.addEventListener('pointerup', endTouch);
+el.mapBox.addEventListener('pointercancel', endTouch);
+
+el.mapBox.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  enterFree();
+  const p = mapPoint(ev);
+  panZoom(p, p, -ev.deltaY * 0.0025);
+}, { passive: false });
+
+el.zoomInBtn.addEventListener('click', () => zoomStep(1));
+el.zoomOutBtn.addEventListener('click', () => zoomStep(-1));
+el.recenterBtn.addEventListener('click', recenter);
+el.expandBtn.addEventListener('click', () => setExpanded(!MAP.expanded));
+
+el.cityChip.addEventListener('click', () => {
+  showTab('settings');
+  el.citySearch.scrollIntoView({ block: 'center' });
+  el.citySearch.focus();
+});
+
+/* ---------- Toast ---------- */
+let toastTimer = null;
+function toast(msg, action = null, ms = 4000) {
+  el.toast.innerHTML = '';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  el.toast.appendChild(span);
+  if (action) {
+    const b = document.createElement('button');
+    b.textContent = action.label;
+    b.onclick = () => { action.fn(); el.toast.classList.remove('show'); };
+    el.toast.appendChild(b);
+  }
+  el.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
+}
+
+/* =====================================================================
+   9. SETTINGS UI, SCREEN WAKE LOCK, CSV EXPORT
+   ===================================================================== */
+function bindSettings() {
+  document.querySelectorAll('[data-setting]').forEach(input => {
+    const key = input.dataset.setting;
+    const load = () => {
+      if (input.type === 'checkbox') input.checked = !!settings[key];
+      else input.value = settings[key];
+    };
+    load();
+    input.addEventListener(input.type === 'range' ? 'input' : 'change', () => {
+      let v = input.type === 'checkbox' ? input.checked : input.value;
+      if (typeof DEFAULTS[key] === 'number') v = Number(v) || 0;
+      settings[key] = v;
+      store.set('settings', settings);
+      applySettings();
+    });
+    input._load = load;
+  });
+}
+
+function applySettings() {
+  el.shell.classList.toggle('dim', settings.dim);
+  document.querySelectorAll('.unit').forEach(u => { u.textContent = unitLabel(); });
+  Sound.setVolume();
+  updateWakeLock();
+  if (!settings.cityFromGps) Cities.detected = null;
+  Cities.lastPos = null;                                        // re-detect the city on the next fix
+  MAP.dirty = true;
+  renderCity(); renderInfo(); renderLockouts(); markHistoryDirty(); scheduleRender();
+}
+
+function reloadSettingInputs() { document.querySelectorAll('[data-setting]').forEach(i => i._load && i._load()); }
+
+let wakeLock = null;
+async function updateWakeLock() {
+  const want = settings.keepAwake && conn.state !== 'idle' && conn.state !== 'error' && document.visibilityState === 'visible';
+  try {
+    if (want && !wakeLock && 'wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch { /* not allowed right now (e.g. battery saver) */ }
+}
+
+async function exportCsv() {
+  if (!alertLog.length) { toast('No history to export.'); return; }
+  const rows = [['time', 'band', 'freq_mhz', 'max_bars', 'direction', 'lat', 'lon', 'speed_' + settings.units, 'filtered']];
+  for (const e of alertLog) {
+    rows.push([new Date(e.t).toISOString(), e.band, e.freq ?? '', e.bars, e.dir, e.lat ?? '', e.lon ?? '',
+               e.spd != null ? Math.round(toUnits(e.spd)) : '', e.sup ?? '']);
+  }
+  const csv = rows.map(r => r.map(v => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v)).join(',')).join('\n');
+  const filename = `radarlink-alerts-${new Date().toISOString().slice(0, 10)}.csv`;
+  // Inside the claude.ai viewer, files go through its save prompt; elsewhere a normal download link.
+  const downloads = embeddedDownloads ? await embeddedDownloads : null;
+  if (downloads) {
+    try { await downloads.save({ filename, data: csv }); toast('CSV saved'); }
+    catch (e) { if (e?.code !== 'declined') toast('Couldn’t save the CSV here.'); }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/* =====================================================================
+   10. WIRING & STARTUP
+   ===================================================================== */
+el.connectBtn.addEventListener('click', () => {
+  Sound.unlock();
+  if (Demo.active) Demo.stop();
+  else if (['scanning', 'connecting', 'connected', 'nodata', 'reconnecting'].includes(conn.state)) disconnectBle();
+  else connectBle();
+});
+
+function toggleDemo() {
+  Sound.unlock();
+  if (Demo.active) Demo.stop();
+  else { Demo.start(); showTab('drive'); }
+}
+el.demoBtn.addEventListener('click', toggleDemo);
+
+el.muteBtn.addEventListener('click', () => { Sound.unlock(); setMuted(!app.muted); });
+el.lockBtn.addEventListener('click', lockoutCurrent);
+
+$('exportBtn').addEventListener('click', exportCsv);
+/** Destructive buttons need a second tap within 3 s (no confirm() dialog — embedded viewers block it). */
+function confirmTap(btn, armedLabel, action) {
+  if (btn.dataset.armed) {
+    clearTimeout(btn._disarm);
+    delete btn.dataset.armed;
+    btn.textContent = btn.dataset.label;
+    action();
+    return;
+  }
+  btn.dataset.label = btn.textContent;
+  btn.dataset.armed = '1';
+  btn.textContent = armedLabel;
+  btn._disarm = setTimeout(() => { delete btn.dataset.armed; btn.textContent = btn.dataset.label; }, 3000);
+}
+
+$('clearHistBtn').addEventListener('click', ev => {
+  if (!alertLog.length) return;
+  confirmTap(ev.currentTarget, 'Tap again to clear', () => {
+    alertLog = []; app.tracked = []; saveHistory(); markHistoryDirty();
+    toast('History cleared');
+  });
+});
+$('clearLoBtn').addEventListener('click', ev => {
+  if (!lockouts.length) return;
+  confirmTap(ev.currentTarget, `Tap again to remove ${lockouts.length}`, () => {
+    lockouts = []; saveLockouts(); renderLockouts(); markHistoryDirty();
+    toast('Lockouts removed');
+  });
+});
+$('resetSettingsBtn').addEventListener('click', () => {
+  Object.assign(settings, DEFAULTS);
+  store.set('settings', settings);
+  reloadSettingInputs(); applySettings();
+  toast('Settings reset');
+});
+
+document.addEventListener('visibilitychange', updateWakeLock);
+window.addEventListener('pagehide', saveHistory);
+
+/** Compatibility notice — Web Bluetooth needs Chromium on Android/desktop and a secure context. */
+function showCompatBanner() {
+  const notes = [];
+  if (bleBlockedByFrame()) {
+    notes.push('<b>Preview mode:</b> this embedded view blocks Bluetooth, GPS and the street map. Open RadarLink from its own https:// address to use it.');
+  } else if (!bleSupported()) {
+    notes.push(isIOS()
+      ? '<b>iPhone / iPad:</b> Web Bluetooth isn’t supported on iOS (all iOS browsers use Safari’s engine), so RadarLink can’t talk to the detector here. The map and camera alerts still work.'
+      : '<b>No Web Bluetooth in this browser.</b> Use Chrome on Android to connect your V1. The map and camera alerts still work.');
+  }
+  if (!window.isSecureContext) notes.push('Bluetooth and GPS need this page served over <b>https://</b> (or localhost).');
+  if (notes.length) { el.banner.innerHTML = notes.join('<br>'); el.banner.hidden = false; }
+}
+
+(async function init() {
+  readBandColors();
+  setExpanded(MAP.expanded);                                    // remember expanded / normal map between visits
+  new ResizeObserver(layoutMap).observe(el.mapBox);
+  layoutMap();
+  bindSettings();
+  applySettings();
+  showCompatBanner();
+  renderHistory();
+  renderLockouts();
+  setConn('idle');
+  requestAnimationFrame(mapLoop);
+  $('demoRow').hidden = location.hash !== '#demo';             // hidden test drive for checking without a V1
+
+  // Housekeeping once a second: link watchdog, expire finished encounters, cameras/city, status line.
+  setInterval(() => { linkWatchdog(); expireTracked(); positionTick(); renderInfo(); }, 1000);
+
+  // GPS drives the map, city detection and camera warnings, so start it right away.
+  startGps();
+  restorePairedDevice();
+})();
+
+// When hosted as a claude.ai artifact, the viewer provides a "downloads" capability for the CSV export.
+const embeddedDownloads = window.claude?.use ? window.claude.use('downloads').catch(() => null) : null;
+</script>
+</body>
+</html>
