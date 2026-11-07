@@ -79,12 +79,27 @@ fun DetailDialog(key: String, onDismiss: () -> Unit) {
                     Text("CLASSIFICATION", color = catColor(o.cls.category), fontSize = 11.sp, letterSpacing = 2.sp)
                     KV("Category", o.cls.category.label)
                     KV("Vendor", o.cls.vendor ?: "unidentified")
-                    KV("Confidence", "${o.cls.confidence}%")
+                    KV("Classifier score", "${o.cls.confidence}/100 (heuristic; not probability)")
                     o.cls.priorityReason?.let { KV("Priority", it) }
                     o.watchHit?.let { KV("Watch", it) }
                     Text("Supporting evidence:", style = MonoSmall)
                     o.cls.basis.forEach { Text("• $it", color = C.Text, fontSize = 11.sp) }
                     Text("Classification describes hardware type/maker only — never an owner.", style = MonoSmall)
+                    val report = com.sophia.signal.classify.EquipmentReports.from(o)
+                    HorizontalDivider(color = C.Line)
+                    Text("EVIDENCE-BASED EQUIPMENT REPORT", color = C.Cyan, fontSize = 11.sp, letterSpacing = 1.sp)
+                    KV("Evidence level", report.confidenceLevel)
+                    KV("Manufacturer", report.manufacturerStatus)
+                    KV("Catalog version", com.sophia.signal.classify.ReferenceCatalog.VERSION)
+                    KV("Applications", report.applications.joinToString("; "))
+                    KV("Common sectors", report.typicalSectors.joinToString("; "))
+                    KV("Ownership", report.ownership)
+                    Text("Alternative explanation: ${report.alternatives}", style = MonoSmall)
+                    Text("Limitations: ${report.limitations}", style = MonoSmall)
+                    Text("Measured / classifier evidence:", style = MonoSmall)
+                    report.observedEvidence.forEach { Text("• $it", style = MonoSmall) }
+                    Text("Reference documentation (category-level; not proof of model):", style = MonoSmall)
+                    report.sources.forEach { Text("• $it", style = MonoSmall) }
 
                     if (samples.size >= 2) {
                         HorizontalDivider(color = C.Line)

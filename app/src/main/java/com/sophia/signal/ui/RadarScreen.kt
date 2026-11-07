@@ -117,10 +117,12 @@ fun RadarScreen(onOpen: (String) -> Unit) {
     var priorityOnly by remember { mutableStateOf(false) }
     var recentOnly by remember { mutableStateOf(true) }
     var sel by remember { mutableStateOf<String?>(null) }
+    var categoryFilter by remember { mutableStateOf<Category?>(null) }
     val now = rememberNow(2000)
     val obs = live.values.filter {
         (showWifi || it.radio != Radio.WIFI) && (showBle || it.radio != Radio.BLE) &&
-            (!priorityOnly || it.isPriority) && (!recentOnly || now - it.lastSeen < 120_000)
+            (!priorityOnly || it.isPriority) && (!recentOnly || now - it.lastSeen < 120_000) &&
+            (categoryFilter == null || it.cls.category == categoryFilter)
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -129,6 +131,19 @@ fun RadarScreen(onOpen: (String) -> Unit) {
             SelChip("BLE", showBle) { showBle = !showBle }
             SelChip("PRIORITY", priorityOnly) { priorityOnly = !priorityOnly }
             SelChip("<2 MIN", recentOnly) { recentOnly = !recentOnly }
+        }
+        Text("Category filter", style = MonoSmall)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            var expanded by remember { mutableStateOf(false) }
+            Box {
+                TextButton(onClick = { expanded = true }) { Text(categoryFilter?.label ?: "All categories") }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(text = { Text("All categories") }, onClick = { categoryFilter = null; expanded = false })
+                    Category.entries.forEach { cat ->
+                        DropdownMenuItem(text = { Text(cat.label) }, onClick = { categoryFilter = cat; expanded = false })
+                    }
+                }
+            }
         }
         Panel("Signal radar · ${obs.size} markers") {
             RadarView(obs, sel, { sel = it })
